@@ -1,6 +1,19 @@
 import type { CanonicalTtsSourceUnit } from './segment-plan';
 import type { TTSSegmentLocator } from './types';
 
+export const PDF_PARSER_VERSION = 'pp-doclayoutv3-onnx@800+pdfjs@4.8.69+layout@2.1';
+
+/** Plans created before layout versioning use the unversioned audio cache. */
+export function pdfParserVersionForPlan(planObjectKey: string): string | undefined {
+  const encoded = /\/pdf\/parser\/([^/]+)\/[a-f0-9]{8,64}\.json$/i.exec(planObjectKey)?.[1];
+  if (!encoded) return undefined;
+  try {
+    return decodeURIComponent(encoded);
+  } catch {
+    return undefined;
+  }
+}
+
 /**
  * Minimal structural views of the parsed-PDF layout artifact. Declared locally
  * so this package stays decoupled from the worker/app parsed-PDF types — both

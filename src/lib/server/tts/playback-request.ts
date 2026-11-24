@@ -1,4 +1,5 @@
 import { buildTtsPlaybackSettingsHash, buildTtsSegmentSettingsJson } from '@openreader/tts/segments';
+import { PDF_PARSER_VERSION, pdfParserVersionForPlan } from '@openreader/tts/pdf-sources';
 import { normalizeVoiceCustomization } from '@openreader/tts/voice-customization';
 import { normalizeOpenRouterOptions } from '@openreader/tts/openrouter';
 import { isTtsProviderType } from '@openreader/tts/provider-catalog';
@@ -208,11 +209,15 @@ export async function buildTtsPlaybackPlanningInput(
   const enforceSourceBoundaries = scope.readerType === 'pdf'
     || scope.readerType === 'epub'
     || scope.readerType === 'html';
+  // An open reader or saved export may still use a plan from before an update.
+  const pdfParserVersion = scope.readerType === 'pdf'
+    ? (parsed.planObjectKey ? pdfParserVersionForPlan(parsed.planObjectKey) : PDF_PARSER_VERSION)
+    : undefined;
 
   // The audio settings hash must vary with segmentation, not just voice: changing
   // skipBlockKinds (etc.) changes which text lands at each ordinal, so reusing a
   // voice-only hash would let the prior segmentation's audio be served against
-  // the new grid. Mirrors the worker's plan signature inputs (handlers.ts).
+  // the new grid. The PDF parser version can also change which text is read.
   const settingsHash = buildTtsPlaybackSettingsHash(parsed.settings, {
     maxBlockLength: parsed.maxBlockLength ?? null,
     language: parsed.language ?? parsed.settings.language ?? null,
@@ -220,6 +225,7 @@ export async function buildTtsPlaybackPlanningInput(
     skipBlockKinds,
     isPlainText,
     namespace: null,
+    pdfParserVersion,
   });
 
   return {

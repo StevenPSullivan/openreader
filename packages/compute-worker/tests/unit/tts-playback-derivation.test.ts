@@ -1,11 +1,15 @@
-import { describe, expect, test } from 'vitest';
+import { describe, expect, test, vi } from 'vitest';
+import { PDF_PARSER_VERSION, pdfParserVersionForPlan } from '@openreader/tts/pdf-sources';
+import { computeSegmentationSignature } from '@openreader/tts/segments';
 import {
   computePlaybackPlanSignature,
   planTtsPlaybackSegments,
+  resolveAndPersistTtsPlaybackPlan,
   resolvePlaybackSourceUnits,
   resolvePlaybackStartOrdinal,
 } from '../../src/jobs/playback/plan';
-import { parsedPdfArtifactKey } from '../../src/storage/artifact-addressing';
+import { parsedPdfArtifactKey, ttsPlaybackPlanArtifactKey } from '../../src/storage/artifact-addressing';
+import type { ArtifactStorage } from '../../src/infrastructure/storage';
 
 const PREFIX = 'openreader';
 const DOCUMENT_ID = 'a'.repeat(64);
@@ -38,9 +42,9 @@ function parsedPdfArtifact() {
   };
 }
 
-function fakeStorage() {
+function fakeStorage(artifact = parsedPdfArtifact()) {
   const key = parsedPdfArtifactKey({ documentId: DOCUMENT_ID, namespace: null, prefix: PREFIX });
-  const body = Buffer.from(JSON.stringify(parsedPdfArtifact()));
+  const body = Buffer.from(JSON.stringify(artifact));
   return {
     key,
     readObject: async (requested: string): Promise<ArrayBuffer> => {
@@ -65,6 +69,54 @@ function baseRequest(planning: Record<string, unknown>) {
 }
 
 describe('worker-owned TTS playback source derivation', () => {
+  test.each(['', 'parser/older-parser/'])('never rebuilds a historical PDF plan under %j', async (version) => {
+    const planObjectKey = `${PREFIX}/tts_playback_plan_v1/${DOCUMENT_ID}/1/pdf/${version}abcdef01.json`;
+    const segments = [{ ordinal: 0, segmentKey: 'existing', text: 'Older PDF text.', locator: null }];
+    const artifact = Uint8Array.from(Buffer.from(JSON.stringify({ schemaVersion: 1, segments }))).buffer;
+    const readObject = vi.fn<(key: string) => Promise<ArrayBuffer>>().mockResolvedValueOnce(artifact).mockRejectedValueOnce(new Error('Missing'));
+    const putObject = vi.fn();
+    const input = {
+      request: { ...baseRequest({ language: 'en' }), planObjectKey },
+      storage: { readObject, putObject } as unknown as ArtifactStorage,
+      s3Prefix: PREFIX,
+    };
+
+    await expect(resolveAndPersistTtsPlaybackPlan(input)).resolves.toMatchObject({ planObjectKey, plannedSegments: segments });
+    await expect(resolveAndPersistTtsPlaybackPlan(input)).rejects.toThrow('Reopen the PDF');
+    expect(readObject.mock.calls).toEqual([[planObjectKey], [planObjectKey]]);
+    expect(putObject).not.toHaveBeenCalled();
+  });
+
+  test('includes graphic text unless its block kind is skipped', async () => {
+    const graphicKinds = ['table', 'chart', 'image', 'seal'];
+    const artifact = parsedPdfArtifact();
+    const blocks = artifact.pages[2]!.blocks;
+    for (const kind of graphicKinds) {
+      const text = `${kind} label`;
+      blocks.push({
+        id: kind,
+        kind,
+        text,
+        fragments: [{ page: 3, bbox: [0, 0, 1, 1], text, readingOrder: blocks.length }],
+      });
+    }
+    const storage = fakeStorage(artifact);
+    const readLabels = async (skipBlockKinds: string[]) => {
+      const units = await resolvePlaybackSourceUnits(
+        baseRequest({ documentSource: { namespace: null, skipBlockKinds, extent: 'document' } }),
+        storage,
+        PREFIX,
+      );
+      return units.map(({ text }) => text);
+    };
+    const all = await readLabels([]);
+    for (const kind of graphicKinds) {
+      const text = `${kind} label`;
+      expect(all).toContain(text);
+      expect(await readLabels([kind])).toEqual(all.filter(label => label !== text));
+    }
+  });
+
   test('derivation returns the whole document, skipping headers', async () => {
     const storage = fakeStorage();
     const units = await resolvePlaybackSourceUnits(
@@ -270,5 +322,29 @@ describe('worker-owned TTS playback source derivation', () => {
       baseRequest({ maxBlockLength: 400, documentSource: { namespace: null, extent: 'document' } }),
     );
     expect(biggerBlocks).not.toBe(fromTop); // segmentation knobs do
+  });
+
+  test('only PDF playback plans are keyed by the PDF parser version', () => {
+    const request = baseRequest({ language: 'en' });
+    const segmentation = {
+      maxBlockLength: null,
+      language: 'en',
+      enforceSourceBoundaries: false,
+      skipBlockKinds: [],
+      isPlainText: false,
+      namespace: JSON.stringify([null, request.storageUserId]),
+    };
+    const planSignature = computePlaybackPlanSignature(request);
+    expect(planSignature).toBe(computeSegmentationSignature({
+      ...segmentation,
+      pdfParserVersion: PDF_PARSER_VERSION,
+    }));
+    expect(computePlaybackPlanSignature({ ...request, readerType: 'epub' }))
+      .toBe(computeSegmentationSignature(segmentation));
+    const planKey = ttsPlaybackPlanArtifactKey({
+      documentId: request.documentId, documentVersion: request.documentVersion, readerType: 'pdf',
+      planSignature, prefix: PREFIX,
+    });
+    expect(pdfParserVersionForPlan(planKey)).toBe(PDF_PARSER_VERSION);
   });
 });

@@ -1,6 +1,7 @@
 import type { ModelComponentProgress, ModelDownloadProgress } from '../inference/model-download';
 import type { ParsedPdfDocument } from '../api/types';
 import type { WorkerOperationAction } from '@openreader/runtime-config/compute-limits';
+import { PDF_PARSER_VERSION } from '@openreader/tts/pdf-sources';
 
 export type {
   TTSAudioBuffer,
@@ -16,7 +17,7 @@ export type {
   ParsedPdfDocument,
 } from '../api/types';
 
-export const PDF_PARSER_VERSION = 'pp-doclayoutv3-onnx@800+pdfjs@4.8.69';
+export { PDF_PARSER_VERSION };
 export const DOCUMENT_PREVIEW_RENDERER_VERSION = 'document-preview@pdfjs-4.8.69+epub-cover-v1';
 export const DOCX_CONVERTER_VERSION = 'docx-to-pdf@libreoffice-v1';
 

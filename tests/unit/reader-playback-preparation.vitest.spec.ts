@@ -1,5 +1,7 @@
 import { NextRequest } from 'next/server';
 import { beforeEach, describe, expect, test, vi } from 'vitest';
+import { PDF_PARSER_VERSION } from '@openreader/tts/pdf-sources';
+import { buildTtsPlaybackSettingsHash } from '@openreader/tts/segments';
 import { createAdmittedPlaybackPlanOperation, resolveDefaultPlaybackRequest, resolveReaderPlayback } from '@/lib/server/reader/playback';
 import { buildTtsPlaybackPlanningInput } from '@/lib/server/tts/playback-request';
 import type { ResolvedSegmentDocumentScope } from '@/lib/server/tts/segments-auth';
@@ -61,6 +63,27 @@ beforeEach(() => {
 });
 
 describe('bootstrap playback preparation', () => {
+  test('keeps an open PDF plan on the audio cache for the parser that produced it', async () => {
+    const pdfScope = { ...scope, readerType: 'pdf' as const, documentName: 'fixture.pdf' };
+    const parsed = await resolveDefaultPlaybackRequest(documentId, pdfScope, DEFAULT_DOCUMENT_SETTINGS, preferences, 'en');
+    if ('error' in parsed) throw new Error(parsed.error);
+    const keyPrefix = `openreader/tts_playback_plan_v1/${documentId}/1/pdf/`;
+    const legacy = await buildTtsPlaybackPlanningInput({ ...parsed, planObjectKey: `${keyPrefix}abcdef01.json` }, pdfScope);
+    const current = await buildTtsPlaybackPlanningInput(parsed, pdfScope);
+    const audioForVersion = async (version: string) => (await buildTtsPlaybackPlanningInput({
+      ...parsed, planObjectKey: `${keyPrefix}parser/${encodeURIComponent(version)}/abcdef01.json`,
+    }, pdfScope)).settingsHash;
+
+    expect(legacy.settingsHash).toBe(buildTtsPlaybackSettingsHash(parsed.settings, {
+      maxBlockLength: parsed.maxBlockLength ?? null, language: parsed.language ?? null,
+      enforceSourceBoundaries: true, skipBlockKinds: parsed.skipBlockKinds ?? [],
+      isPlainText: false, namespace: null,
+    }));
+    expect(legacy.settingsHash).not.toBe(current.settingsHash);
+    expect(await audioForVersion(PDF_PARSER_VERSION)).toBe(current.settingsHash);
+    expect(await audioForVersion('other-parser-version')).not.toBe(current.settingsHash);
+  });
+
   test('reads a failed plan without re-enqueueing it during audiobook advancement', async () => {
     const parsed = await resolveDefaultPlaybackRequest(documentId, scope, DEFAULT_DOCUMENT_SETTINGS, preferences);
     if ('error' in parsed) throw new Error(parsed.error);

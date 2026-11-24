@@ -2,7 +2,7 @@ import { normalizeLanguageTag } from '@openreader/tts/language';
 import { normalizeSpeechText } from '@openreader/tts/speech-text';
 import { normalizeVoiceCustomization } from '@openreader/tts/voice-customization';
 import { buildHtmlSourceUnits, parseHtmlBlocks } from '@openreader/tts/html-blocks';
-import { buildPdfPageSourceUnits } from '@openreader/tts/pdf-sources';
+import { buildPdfPageSourceUnits, PDF_PARSER_VERSION, pdfParserVersionForPlan } from '@openreader/tts/pdf-sources';
 import {
   buildSegmentKeyPrefix,
   normalizeSourceText,
@@ -224,6 +224,7 @@ export function computePlaybackPlanSignature(request: TtsPlaybackPlanCapableRequ
       documentSource?.namespace ?? null,
       request.storageUserId,
     ]),
+    ...(request.readerType === 'pdf' ? { pdfParserVersion: PDF_PARSER_VERSION } : {}),
   });
 }
 
@@ -317,7 +318,13 @@ export async function resolveAndPersistTtsPlaybackPlan(input: {
   const planObjectKey = input.request.planObjectKey ?? computedPlanObjectKey;
   const write = await prepareArtifactWrite(input.storage, planObjectKey, input.attempt);
   let plannedSegments = await readPersistedTtsPlaybackPlanSegments(input.storage, planObjectKey);
-  if (!plannedSegments || plannedSegments.length === 0) {
+  const historicalPdfPlan = input.request.readerType === 'pdf'
+    && input.request.planObjectKey !== undefined
+    && pdfParserVersionForPlan(planObjectKey) !== PDF_PARSER_VERSION;
+  if (historicalPdfPlan && !plannedSegments) {
+    throw new Error('The previous PDF playback plan is unavailable. Reopen the PDF to prepare a new plan.');
+  }
+  if (!plannedSegments || (!historicalPdfPlan && plannedSegments.length === 0)) {
     plannedSegments = planTtsPlaybackSegments(
       input.request,
       await resolvePlaybackSourceUnits(input.request, input.storage, input.s3Prefix),

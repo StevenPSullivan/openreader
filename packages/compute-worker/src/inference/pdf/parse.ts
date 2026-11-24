@@ -91,7 +91,7 @@ export async function parsePdf(input: ParsePdfInput): Promise<ParsedPdfDocument>
         textContent.styles,
       );
 
-      if (textItems.length > 0) sawText = true;
+      if (textItems.some((item) => !item.rotation)) sawText = true;
 
       const rendered = await renderPage({
         pdfBytes: pdfBytesForRender.buffer.slice(
@@ -109,6 +109,7 @@ export async function parsePdf(input: ParsePdfInput): Promise<ParsedPdfDocument>
         y: item.y * scaleY,
         width: item.width * scaleX,
         height: item.height * scaleY,
+        baselineY: item.baselineY === undefined ? undefined : item.baselineY * scaleY,
       }));
       const regions = await runLayoutModel({
         pageWidth: rendered.width,
@@ -117,6 +118,7 @@ export async function parsePdf(input: ParsePdfInput): Promise<ParsedPdfDocument>
         pageImage: rendered.image,
       });
       const merged = mergeTextWithRegions(regions, layoutTextItems);
+      if (!sawText && merged.some((block) => block.text)) sawText = true;
       // Do not fail the full document parse when a page has text but model
       // detection/assignment yields no merged regions. Emit an empty page so
       // downstream playback/tts flows can naturally skip it.

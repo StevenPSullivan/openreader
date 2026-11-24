@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 import { createComputeWorkerApp } from '../../src/api/app';
+import { encodeParserVersion, PDF_PARSER_VERSION } from '../../src/operations/contracts';
 import { buildTtsPlaybackOperationKey } from '../../src/operations/keys';
 import { FakeControlPlane } from '../fixtures/fake-control-plane';
 
@@ -428,7 +429,7 @@ describe('compute worker API routes', () => {
     });
     expect(create.statusCode).toBe(202);
 
-    const artifactKey = `openreader/documents_v1/parsed_v2/${documentId}/pp-doclayoutv3-onnx%40800%2Bpdfjs%404.8.69.json`;
+    const artifactKey = `openreader/documents_v1/parsed_v2/${documentId}/${encodeParserVersion(PDF_PARSER_VERSION)}.json`;
     fake.seedArtifact(artifactKey);
     const resolve = await runtime.app.inject({
       method: 'POST',
@@ -453,11 +454,11 @@ describe('compute worker API routes', () => {
 
   test('resolves a current PDF artifact after operation state has expired', async () => {
     const documentId = 'd'.repeat(64);
-    const artifactKey = `openreader/documents_v1/parsed_v2/${documentId}/pp-doclayoutv3-onnx%40800%2Bpdfjs%404.8.69.json`;
-    fake.seedArtifact(artifactKey);
-
-    const resolve = await runtime.app.inject({
-      method: 'POST',
+    const prefix = `openreader/documents_v1/parsed_v2/${documentId}/`;
+    fake.seedArtifact(`${prefix}pp-doclayoutv3-onnx%40800%2Bpdfjs%404.8.69.json`);
+    const artifactKey = `openreader/documents_v1/parsed_v2/${documentId}/${encodeParserVersion(PDF_PARSER_VERSION)}.json`;
+    const request = {
+      method: 'POST' as const,
       url: '/v1/pdf-layout/resolve',
       headers: AUTH,
       payload: {
@@ -465,7 +466,14 @@ describe('compute worker API routes', () => {
         namespace: null,
         documentObjectKey: `openreader/${documentId}.pdf`,
       },
-    });
+    };
+
+    const stale = await runtime.app.inject(request);
+    expect(stale.statusCode).toBe(200);
+    expect(stale.json()).toEqual({ artifact: null, operation: null });
+
+    fake.seedArtifact(artifactKey);
+    const resolve = await runtime.app.inject(request);
 
     expect(resolve.statusCode).toBe(200);
     expect(resolve.json()).toEqual({

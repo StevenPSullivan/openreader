@@ -1,11 +1,22 @@
 import type { ParsedPdfBlockKind } from '../../api/types';
 
+interface RotatedBaseline {
+  x: number;
+  y: number;
+  dx: number;
+  dy: number;
+  advance: number;
+  spaceBefore: boolean;
+}
+
 export interface PdfTextItem {
   text: string;
   x: number;
   y: number;
   width: number;
   height: number;
+  baselineY?: number;
+  rotation?: RotatedBaseline;
 }
 
 export interface LayoutRegion {
@@ -14,26 +25,7 @@ export interface LayoutRegion {
   confidence?: number;
 }
 
-const NON_TEXT_REGION_LABELS = new Set<LayoutRegion['label']>(['chart', 'image', 'table', 'seal']);
-const TEXT_ASSIGNABLE_LABELS = new Set<LayoutRegion['label']>([
-  'abstract',
-  'algorithm',
-  'aside_text',
-  'content',
-  'doc_title',
-  'figure_title',
-  'footer',
-  'footnote',
-  'formula_number',
-  'header',
-  'number',
-  'paragraph_title',
-  'reference',
-  'reference_content',
-  'text',
-  'vision_footnote',
-  'formula',
-]);
+const GRAPHIC_REGION_LABELS = new Set<LayoutRegion['label']>(['chart', 'image', 'table', 'seal']);
 
 function centroid(item: PdfTextItem): { x: number; y: number } {
   return {
@@ -47,12 +39,63 @@ function contains(region: LayoutRegion, item: PdfTextItem): boolean {
   return c.x >= region.bbox[0] && c.x <= region.bbox[2] && c.y >= region.bbox[1] && c.y <= region.bbox[3];
 }
 
+interface ReadingLine {
+  x: number;
+  y: number;
+  items: PdfTextItem[];
+}
+
+function horizontalLines(items: PdfTextItem[]): ReadingLine[] {
+  const lines: Array<ReadingLine & { baselineY?: number }> = [];
+  for (const item of items) {
+    const { x, y, baselineY } = item;
+    // A drop cap can sit on a later baseline while starting the first line.
+    const spansEarlierLine = baselineY !== undefined && /^\p{L}$/u.test(item.text.trim())
+      && items.some(other => other.baselineY !== undefined
+        && other.baselineY < baselineY - 2 && other.baselineY > y
+        && other.x >= x + item.width - 2 && other.height * 2 <= item.height);
+    const line = lines.find(candidate => baselineY !== undefined && !spansEarlierLine
+      && candidate.baselineY !== undefined && Math.abs(candidate.baselineY - baselineY) <= 2);
+    if (line) {
+      line.items.push(item);
+      line.x = Math.min(line.x, x);
+      line.y = Math.min(line.y, y);
+    } else {
+      lines.push({ x, y, baselineY: spansEarlierLine ? undefined : baselineY, items: [item] });
+    }
+  }
+  for (const line of lines) line.items.sort((a, b) => a.x - b.x);
+  return lines;
+}
+
+function sameBaseline(a: RotatedBaseline, b: RotatedBaseline): boolean {
+  return a.dx * b.dx + a.dy * b.dy > 0.999
+    && Math.abs((b.x - a.x) * a.dy - (b.y - a.y) * a.dx) <= 2;
+}
+
 function sortReadingOrder(items: PdfTextItem[]): PdfTextItem[] {
-  const tolerance = 2;
-  return [...items].sort((a, b) => {
-    if (Math.abs(a.y - b.y) <= tolerance) return a.x - b.x;
+  const lines = horizontalLines(items.filter(item => !item.rotation));
+  const rotatedLines: Array<ReadingLine & { baseline: RotatedBaseline }> = [];
+  for (const item of items) {
+    if (!item.rotation) continue;
+    const baseline = item.rotation;
+    const line = rotatedLines.find(candidate => sameBaseline(candidate.baseline, baseline));
+    if (line) {
+      line.items.push(item);
+      line.x = Math.min(line.x, item.x);
+      line.y = Math.min(line.y, item.y);
+    } else {
+      rotatedLines.push({ x: item.x, y: item.y, baseline, items: [item] });
+    }
+  }
+  for (const line of rotatedLines) {
+    const { dx, dy } = line.baseline;
+    line.items.sort((a, b) => (a.rotation!.x - b.rotation!.x) * dx + (a.rotation!.y - b.rotation!.y) * dy);
+  }
+  return [...lines, ...rotatedLines].sort((a, b) => {
+    if (Math.abs(a.y - b.y) <= 2) return a.x - b.x;
     return a.y - b.y;
-  });
+  }).flatMap(line => line.items);
 }
 
 function joinText(items: PdfTextItem[]): string {
@@ -71,9 +114,18 @@ function joinText(items: PdfTextItem[]): string {
     const itemBottom = item.y + item.height;
     const verticalOverlap = Math.max(0, Math.min(prevBottom, itemBottom) - Math.max(prev.y, item.y));
     const sharesLineBand = verticalOverlap >= Math.max(1, Math.min(prev.height, item.height) * 0.5);
-    const lineBreak = !sharesLineBand && lineJump > Math.max(2, Math.min(prev.height, item.height) * 0.6);
+    const wrappedBaseline = prev.baselineY !== undefined && item.baselineY !== undefined
+      && item.baselineY > prev.baselineY + 2 && item.x < prev.x;
+    const lineBreak = wrappedBaseline || (!sharesLineBand && lineJump > Math.max(2, Math.min(prev.height, item.height) * 0.6));
     const avgCharWidth = item.width / Math.max(1, item.text.length);
-    const needsSpace = lineBreak || gap > Math.max(avgCharWidth * 0.3, 2);
+    const spaceThreshold = Math.max(avgCharWidth * 0.3, 2);
+    let needsSpace = Boolean(prev.rotation || item.rotation) || lineBreak || gap > spaceThreshold;
+    if (prev.rotation && item.rotation && sameBaseline(prev.rotation, item.rotation)) {
+      const a = prev.rotation;
+      const b = item.rotation;
+      const baselineGap = (b.x - a.x) * a.dx + (b.y - a.y) * a.dy - a.advance;
+      needsSpace = b.spaceBefore || baselineGap > 2;
+    }
     out += needsSpace ? ` ${item.text}` : item.text;
     prev = item;
   }
@@ -110,22 +162,28 @@ export function mergeTextWithRegions(regions: LayoutRegion[], textItems: PdfText
     return Number.isFinite(min) ? min : Number.MAX_SAFE_INTEGER;
   };
 
-  const assignableRegions = regions
-    .map((region, index) => ({ region, index }))
-    .filter(({ region }) => TEXT_ASSIGNABLE_LABELS.has(region.label));
+  const indexedRegions = regions.map((region, index) => ({
+    region,
+    index,
+    isGraphic: GRAPHIC_REGION_LABELS.has(region.label),
+  }));
   const assignedByRegion = new Map<number, PdfTextItem[]>();
 
   for (const item of textItems) {
-    const candidates = assignableRegions.filter(({ region }) => contains(region, item));
+    const candidates = indexedRegions.filter(({ region }) => contains(region, item));
     if (candidates.length === 0) continue;
 
     candidates.sort((a, b) => {
+      // Keep text in its existing region when a graphic overlaps prose or a caption.
+      if (a.isGraphic !== b.isGraphic) return a.isGraphic ? 1 : -1;
       const scoreDelta = regionScore(b.region) - regionScore(a.region);
       if (Math.abs(scoreDelta) > 1e-6) return scoreDelta;
       return regionArea(a.region) - regionArea(b.region);
     });
 
     const winner = candidates[0];
+    // Keep excluding rotated prose and margin metadata, even if a graphic overlaps it.
+    if (item.rotation && !winner.isGraphic) continue;
     const list = assignedByRegion.get(winner.index) ?? [];
     list.push(item);
     assignedByRegion.set(winner.index, list);
@@ -133,29 +191,16 @@ export function mergeTextWithRegions(regions: LayoutRegion[], textItems: PdfText
 
   const out: RegionTextBlock[] = [];
 
-  for (const [regionIndex, assignedItems] of assignedByRegion.entries()) {
-    const region = regions[regionIndex];
-    if (!region) continue;
-    if (assignedItems.length === 0) continue;
-    const ordered = sortReadingOrder(assignedItems);
+  for (const { region, index, isGraphic } of indexedRegions) {
+    const ordered = sortReadingOrder(assignedByRegion.get(index) ?? []);
     const text = joinText(ordered);
-    if (!text) continue;
+    if (!text && !isGraphic) continue;
 
     out.push({
       region,
       text,
       items: ordered,
       sourceOrder: chunkSourceOrder(ordered),
-    });
-  }
-
-  for (const region of regions) {
-    if (!NON_TEXT_REGION_LABELS.has(region.label)) continue;
-    out.push({
-      region,
-      text: '',
-      items: [],
-      sourceOrder: Number.MAX_SAFE_INTEGER,
     });
   }
 

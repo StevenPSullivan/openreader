@@ -1,5 +1,4 @@
-import { PDF_PARSER_VERSION } from '../operations/contracts';
-import { encodeParserVersion } from '../operations/contracts';
+import { encodeParserVersion, PDF_PARSER_VERSION } from '../operations/contracts';
 import { documentPreviewWidth } from '../operations/keys';
 
 const DOCUMENT_ID_REGEX = /^[a-f0-9]{64}$/i;
@@ -74,7 +73,8 @@ export function ttsPlaybackPlanArtifactKey(input: {
     throw new Error(`Invalid playback plan signature: ${input.planSignature}`);
   }
   const version = Math.max(0, Math.floor(input.documentVersion));
-  return `${ttsPlaybackPlanArtifactPrefix(input)}${version}/${input.readerType}/${input.planSignature}.json`;
+  const parserPath = input.readerType === 'pdf' ? `parser/${encodeParserVersion(PDF_PARSER_VERSION)}/` : '';
+  return `${ttsPlaybackPlanArtifactPrefix(input)}${version}/${input.readerType}/${parserPath}${input.planSignature}.json`;
 }
 
 export function ttsPlaybackPlanArtifactPrefix(input: {

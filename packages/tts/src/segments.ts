@@ -63,6 +63,7 @@ export interface SegmentationSignatureInput {
   skipBlockKinds: readonly string[];
   isPlainText: boolean;
   namespace: string | null;
+  pdfParserVersion?: string;
 }
 
 /**
@@ -79,6 +80,7 @@ export function segmentationSignatureCanonical(input: SegmentationSignatureInput
     skipBlockKinds: [...input.skipBlockKinds].map((kind) => kind.trim()).filter(Boolean).sort(),
     isPlainText: Boolean(input.isPlainText),
     namespace: input.namespace ?? null,
+    ...(input.pdfParserVersion ? { pdfParserVersion: input.pdfParserVersion } : {}),
   });
 }
 
