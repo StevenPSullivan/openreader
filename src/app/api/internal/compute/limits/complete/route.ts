@@ -59,9 +59,11 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     });
   }
   const audiobookStep = rows.find((row) => AUDIOBOOK_STEP_ACTIONS.has(row.action));
+  const pdfLayoutFinished = rows.some(row => row.action === 'pdf_layout')
+    || (admissionAction === 'pdf_layout' && awaitingLink.length === 0);
   // The worker awaits this callback before acknowledging its job, so the next
   // step runs after the response. If this is lost, the next GET advances it.
-  if (audiobookStep || rows.some((row) => row.action === 'pdf_layout')) {
+  if (audiobookStep || pdfLayoutFinished) {
     after(() => advanceAudiobooksAfterOperation(parsed.operationId, audiobookStep?.userId).catch((advanceError: unknown) => {
       logDegraded(serverLogger, {
         event: 'audiobooks.advance_signal.failed',

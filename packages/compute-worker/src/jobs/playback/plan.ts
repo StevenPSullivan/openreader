@@ -325,13 +325,17 @@ export async function resolveAndPersistTtsPlaybackPlan(input: {
     pdfParserVersion,
   });
   const planObjectKey = input.request.planObjectKey ?? computedPlanObjectKey;
-  const write = await prepareArtifactWrite(input.storage, planObjectKey, input.attempt);
-  let plannedSegments = await readPersistedTtsPlaybackPlanSegments(input.storage, planObjectKey);
   const historicalPdfPlan = input.request.readerType === 'pdf'
     && input.request.planObjectKey !== undefined
     && pdfParserVersionForPlan(planObjectKey) !== PDF_PARSER_VERSION;
+  const reopenMessage = 'The previous PDF playback plan is unavailable. Reopen the PDF to prepare a new plan.';
+  const write = await prepareArtifactWrite(input.storage, planObjectKey, input.attempt);
+  let plannedSegments = await readPersistedTtsPlaybackPlanSegments(input.storage, planObjectKey).catch(error => {
+    if (!historicalPdfPlan) throw error;
+    throw new Error(reopenMessage, { cause: error });
+  });
   if (historicalPdfPlan && !plannedSegments) {
-    throw new Error('The previous PDF playback plan is unavailable. Reopen the PDF to prepare a new plan.');
+    throw new Error(reopenMessage);
   }
   if (!plannedSegments || (!historicalPdfPlan && plannedSegments.length === 0)) {
     plannedSegments = planTtsPlaybackSegments(

@@ -72,13 +72,13 @@ function baseRequest(planning: Record<string, unknown>) {
 describe('worker-owned TTS playback source derivation', () => {
   test('finishes a pre-upgrade queued PDF plan from the layout it was queued with', async () => {
     const request = baseRequest({ documentSource: { namespace: null, extent: 'document' } });
+    const parserVersion = 'pp-doclayoutv3-onnx@800+pdfjs@4.8.69';
     const legacyLayoutKey = parsedPdfArtifactKey({
-      documentId: DOCUMENT_ID, namespace: null, prefix: PREFIX,
-      parserVersion: 'pp-doclayoutv3-onnx@800+pdfjs@4.8.69',
+      documentId: DOCUMENT_ID, namespace: null, prefix: PREFIX, parserVersion,
     });
     const readObject = vi.fn(async (key: string) => {
       if (key !== legacyLayoutKey) throw new Error(`Missing object: ${key}`);
-      return Uint8Array.from(Buffer.from(JSON.stringify(parsedPdfArtifact()))).buffer;
+      return Uint8Array.from(Buffer.from(JSON.stringify({ ...parsedPdfArtifact(), parserVersion }))).buffer;
     });
     const putObject = vi.fn();
     const handler = createTtsPlaybackPlanHandler({
@@ -87,7 +87,9 @@ describe('worker-owned TTS playback source derivation', () => {
     const { sessionId: _sessionId, ...job } = request;
 
     const result = await handler(job, 0);
-    expect(result.planObjectKey).toBe(`${PREFIX}/tts_playback_plan_v1/${DOCUMENT_ID}/1/pdf/${result.planSignature}.json`);
+    // Expected signature from the planner before PDF parser versioning.
+    const legacySignature = 'e41901f2f7b75cbaeb167c530fc587d5';
+    expect(result.planObjectKey).toBe(`${PREFIX}/tts_playback_plan_v1/${DOCUMENT_ID}/1/pdf/${legacySignature}.json`);
     expect(result.plannedCount).toBeGreaterThan(0);
     expect(putObject).toHaveBeenCalledOnce();
     const [writtenKey, writtenBody] = putObject.mock.calls[0]!;
@@ -95,9 +97,13 @@ describe('worker-owned TTS playback source derivation', () => {
     expect(JSON.parse(writtenBody.toString())).toMatchObject({ settingsHash: job.settingsHash });
   });
 
-  test.each(['', 'parser/older-parser/'])('never rebuilds a historical PDF plan under %j', async (version) => {
+  test.each([
+    { version: '', empty: false },
+    { version: 'parser/older-parser/', empty: false },
+    { version: 'parser/older-parser/', empty: true },
+  ])('never rebuilds a historical PDF plan under "$version" (empty: $empty)', async ({ version, empty }) => {
     const planObjectKey = `${PREFIX}/tts_playback_plan_v1/${DOCUMENT_ID}/1/pdf/${version}abcdef01.json`;
-    const segments = [{ ordinal: 0, segmentKey: 'existing', text: 'Older PDF text.', locator: null }];
+    const segments = empty ? [] : [{ ordinal: 0, segmentKey: 'existing', text: 'Older PDF text.', locator: null }];
     const artifact = Uint8Array.from(Buffer.from(JSON.stringify({ schemaVersion: 1, segments }))).buffer;
     const readObject = vi.fn<(key: string) => Promise<ArrayBuffer>>().mockResolvedValueOnce(artifact).mockRejectedValueOnce(new Error('Missing'));
     const putObject = vi.fn();
@@ -110,6 +116,19 @@ describe('worker-owned TTS playback source derivation', () => {
     await expect(resolveAndPersistTtsPlaybackPlan(input)).resolves.toMatchObject({ planObjectKey, plannedSegments: segments });
     await expect(resolveAndPersistTtsPlaybackPlan(input)).rejects.toThrow('Reopen the PDF');
     expect(readObject.mock.calls).toEqual([[planObjectKey], [planObjectKey]]);
+    expect(putObject).not.toHaveBeenCalled();
+  });
+
+  test.each(['{', '{"schemaVersion":99}'])('explains how to recover a corrupt historic PDF plan %j', async (data) => {
+    const planObjectKey = `${PREFIX}/tts_playback_plan_v1/${DOCUMENT_ID}/1/pdf/abcdef01.json`;
+    const readObject = vi.fn(async () => new TextEncoder().encode(data).buffer);
+    const putObject = vi.fn();
+    await expect(resolveAndPersistTtsPlaybackPlan({
+      request: { ...baseRequest({}), planObjectKey },
+      storage: { readObject, putObject } as unknown as ArtifactStorage,
+      s3Prefix: PREFIX,
+    })).rejects.toThrow('Reopen the PDF');
+    expect(readObject.mock.calls).toEqual([[planObjectKey]]);
     expect(putObject).not.toHaveBeenCalled();
   });
 

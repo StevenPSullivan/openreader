@@ -85,13 +85,10 @@ export async function parsePdf(input: ParsePdfInput): Promise<ParsedPdfDocument>
       const page = await pdf.getPage(pageNumber);
       const viewport = page.getViewport({ scale: 1.0 });
       const textContent = await page.getTextContent();
-      const textItems = normalizeTextItemsForLayout(
-        textContent.items.filter((item): item is TextItem => 'str' in item && 'transform' in item),
-        viewport,
-        textContent.styles,
-      );
+      const extracted = textContent.items.filter((item): item is TextItem => 'str' in item && 'transform' in item);
+      const textItems = normalizeTextItemsForLayout(extracted, viewport, textContent.styles);
 
-      if (textItems.some((item) => !item.rotation)) sawText = true;
+      if (textItems.some(item => !item.rotation || item.rotation.readableAsProse)) sawText = true;
 
       const rendered = await renderPage({
         pdfBytes: pdfBytesForRender.buffer.slice(
@@ -110,7 +107,11 @@ export async function parsePdf(input: ParsePdfInput): Promise<ParsedPdfDocument>
         textItems: layoutTextItems,
         pageImage: rendered.image,
       });
-      const merged = mergeTextWithRegions(regions, layoutTextItems);
+      // Keep reading-order tolerances in page units, independent of render scale.
+      const merged = mergeTextWithRegions(regions.map(({ bbox, ...region }) => ({
+        ...region,
+        bbox: [bbox[0] / scaleX, bbox[1] / scaleY, bbox[2] / scaleX, bbox[3] / scaleY],
+      })), textItems);
       if (!sawText && merged.some((block) => block.text)) sawText = true;
       // Do not fail the full document parse when a page has text but model
       // detection/assignment yields no merged regions. Emit an empty page so
@@ -122,12 +123,7 @@ export async function parsePdf(input: ParsePdfInput): Promise<ParsedPdfDocument>
           kind: entry.region.label,
           fragments: [{
             page: pageNumber,
-            bbox: [
-              entry.region.bbox[0] / scaleX,
-              entry.region.bbox[1] / scaleY,
-              entry.region.bbox[2] / scaleX,
-              entry.region.bbox[3] / scaleY,
-            ] as [number, number, number, number],
+            bbox: entry.region.bbox,
             text: entry.text,
             readingOrder,
             ...(typeof entry.region.confidence === 'number' ? { modelConfidence: entry.region.confidence } : {}),

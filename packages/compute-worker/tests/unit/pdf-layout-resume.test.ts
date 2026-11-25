@@ -1,5 +1,8 @@
 import { readFile } from 'node:fs/promises';
 import { expect, test, vi } from 'vitest';
+import { runLayoutModel } from '../../src/inference/pdf/layout-model';
+import { parsePdf } from '../../src/inference/pdf/parse';
+import { renderPage } from '../../src/inference/pdf/render';
 import { createPdfLayoutHandler, type PdfLayoutExecution } from '../../src/jobs/pdf-layout';
 import type { ParsedPdfArtifactRevision, ParsedPdfArtifactStorage } from '../../src/infrastructure/storage';
 import { parsedPdfArtifactKey } from '../../src/storage/artifact-addressing';
@@ -7,11 +10,26 @@ import { withIdleTimeoutAndHardCap } from '../../src/infrastructure/config';
 
 vi.mock('../../src/inference/pdf/model', () => ({ ensureModel: vi.fn() }));
 vi.mock('../../src/inference/pdf/layout-model', () => ({
-  runLayoutModel: async () => [{ label: 'text', bbox: [0, 0, 612, 792], confidence: 0.9 }],
+  runLayoutModel: vi.fn(async () => [{ label: 'text', bbox: [0, 0, 612, 792], confidence: 0.9 }]),
 }));
 vi.mock('../../src/inference/pdf/render', () => ({
-  renderPage: async () => ({ width: 612, height: 792, image: new Uint8Array(4) }),
+  renderPage: vi.fn(async () => ({ width: 612, height: 792, image: new Uint8Array(4) })),
 }));
+
+test('groups neighboring text baselines at the PDF layout render scale', async () => {
+  vi.mocked(renderPage).mockResolvedValueOnce({
+    width: 270, height: 210, image: Buffer.alloc(4), contentType: 'image/png',
+  });
+  vi.mocked(runLayoutModel).mockResolvedValueOnce([{ label: 'table', bbox: [15, 99, 240, 135] }]);
+  const bytes = await readFile(new URL('../../../../tests/files/banded-baselines.pdf', import.meta.url));
+  const parsed = await parsePdf({ documentId: 'banded-baselines', pdfBytes: Uint8Array.from(bytes).buffer });
+
+  expect(parsed.pages[0]?.blocks).toMatchObject([{
+    kind: 'table',
+    text: 'left middle right next row',
+    fragments: [{ bbox: [10, 66, 160, 90] }],
+  }]);
+});
 
 test('checkpoint I/O pauses the parser idle timeout while the hard cap still applies', async () => {
   vi.useFakeTimers();
