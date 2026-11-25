@@ -1,0 +1,77 @@
+name: Cross-platform tests
+
+on:
+  push:
+    branches: [ci/cross-platform]
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 18
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-2025, ubuntu-24.04, macos-15]
+    steps:
+      - name: Check out test request
+        uses: actions/checkout@v5
+        with:
+          path: ci
+          persist-credentials: false
+      - name: Read candidate revision
+        id: candidate
+        shell: pwsh
+        run: |
+          $request = Get-Content -LiteralPath 'ci/check.json' -Raw | ConvertFrom-Json
+          if ($request.revision -cnotmatch '^[0-9a-f]{40}$') {
+            throw 'Set revision to the full Git commit SHA.'
+          }
+          "sha=$($request.revision)" >> $env:GITHUB_OUTPUT
+      - name: Check out candidate
+        uses: actions/checkout@v5
+        with:
+          ref: ${{ steps.candidate.outputs.sha }}
+          path: candidate
+          persist-credentials: false
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 26
+          package-manager-cache: false
+      - uses: pnpm/action-setup@v6
+        with:
+          package_json_file: candidate/package.json
+      - name: Install dependencies
+        working-directory: candidate
+        run: pnpm install --frozen-lockfile
+      - name: Run requested tests
+        working-directory: candidate
+        shell: pwsh
+        env:
+          EXPECTED_SHA: ${{ steps.candidate.outputs.sha }}
+        run: |
+          $actual = git rev-parse HEAD
+          if ($LASTEXITCODE -ne 0 -or $actual -cne $env:EXPECTED_SHA) {
+            throw "Expected $env:EXPECTED_SHA, checked out $actual."
+          }
+
+          $request = Get-Content -LiteralPath '../ci/check.json' -Raw | ConvertFrom-Json
+          if ($request.project -cnotmatch '^[a-zA-Z0-9_-]+$' -or !$request.tests) {
+            throw 'Choose a Vitest project and at least one test file.'
+          }
+          foreach ($file in $request.tests) {
+            if ($file -cnotmatch '^[A-Za-z0-9_][A-Za-z0-9_/.-]*\.(test|spec)\.[cm]?[jt]sx?$' -or
+                ($file -split '/') -contains '..' -or
+                !(Test-Path -LiteralPath $file -PathType Leaf)) {
+              throw "Expected a test file in the candidate checkout: $file"
+            }
+          }
+
+          "Candidate $actual"
+          node -p "process.platform + ' ' + process.arch"
+          $testArgs = @('exec', 'vitest', 'run', '--project', $request.project) + @($request.tests)
+          pnpm @testArgs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }

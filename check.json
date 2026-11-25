@@ -1,0 +1,8 @@
+{
+  "revision": "78390594d54da227115bc776dfca59cd0849651f",
+  "project": "compute-worker",
+  "tests": [
+    "packages/compute-worker/tests/unit/pdf-layout-resume.test.ts",
+    "packages/compute-worker/tests/unit/pdf-artifact-persistence.test.ts"
+  ]
+}
