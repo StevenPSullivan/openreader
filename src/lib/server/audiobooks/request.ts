@@ -2,6 +2,7 @@ import { and, eq } from 'drizzle-orm';
 import type { NextRequest } from 'next/server';
 import { db } from '@openreader/database';
 import { documentSettings, documents, userPreferences } from '@openreader/database/schema';
+import { pdfParserVersionForPlan } from '@openreader/tts/pdf-sources';
 import type { AudiobookCaller, AudiobookIntent } from '@/lib/server/audiobooks/audiobooks';
 import { apiErrorResponse } from '@/lib/server/api/responses';
 import { ComputeWorkerClient } from '@/lib/server/compute-worker/client';
@@ -107,8 +108,10 @@ export async function resolveAudiobookIntent(
     if (parsed.planObjectKey) {
       // The key comes from the caller, so only this document's plans are ever read.
       const planPrefix = `${getS3Config().prefix}/tts_playback_plan_v1/${documentId}/${caller.scope.documentVersion}/${caller.scope.readerType}/`;
-      const signature = parsed.planObjectKey.startsWith(planPrefix) ? parsed.planObjectKey.slice(planPrefix.length) : '';
-      if (!/^[a-f0-9]{8,64}\.json$/i.test(signature)) {
+      const planPath = parsed.planObjectKey.startsWith(planPrefix) ? parsed.planObjectKey.slice(planPrefix.length) : '';
+      const versionedPdfPlan = caller.scope.readerType === 'pdf' && planPath.split('/').length === 3
+        && pdfParserVersionForPlan(parsed.planObjectKey) !== undefined;
+      if (!/^[a-f0-9]{8,64}\.json$/i.test(planPath) && !versionedPdfPlan) {
         return apiErrorResponse(403, 'PLAN_FORBIDDEN', 'The reading plan does not belong to this document.');
       }
       const { artifact } = await readTtsPlaybackPlanArtifact(parsed.planObjectKey);

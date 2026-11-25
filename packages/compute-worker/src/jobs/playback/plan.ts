@@ -2,7 +2,7 @@ import { normalizeLanguageTag } from '@openreader/tts/language';
 import { normalizeSpeechText } from '@openreader/tts/speech-text';
 import { normalizeVoiceCustomization } from '@openreader/tts/voice-customization';
 import { buildHtmlSourceUnits, parseHtmlBlocks } from '@openreader/tts/html-blocks';
-import { buildPdfPageSourceUnits, PDF_PARSER_VERSION, pdfParserVersionForPlan } from '@openreader/tts/pdf-sources';
+import { buildPdfPageSourceUnits, LEGACY_PDF_PARSER_VERSION, PDF_PARSER_VERSION, pdfParserVersionForPlan } from '@openreader/tts/pdf-sources';
 import {
   buildSegmentKeyPrefix,
   normalizeSourceText,
@@ -72,11 +72,12 @@ export async function resolvePlaybackSourceUnits(
   request: TtsPlaybackPlanCapableRequest,
   storage: Pick<ArtifactStorage, 'readObject'>,
   s3Prefix: string,
+  pdfParserVersion = PDF_PARSER_VERSION,
 ): Promise<CanonicalTtsSourceUnit[]> {
   const documentSource = request.planning.documentSource;
   if (!documentSource) return [];
   if (request.readerType === 'pdf') {
-    return derivePdfSourceUnits(request, documentSource, storage, s3Prefix);
+    return derivePdfSourceUnits(request, documentSource, storage, s3Prefix, pdfParserVersion);
   }
   if (request.readerType === 'epub') {
     return deriveEpubSourceUnits(request, documentSource, storage, s3Prefix);
@@ -146,11 +147,13 @@ async function derivePdfSourceUnits(
   documentSource: NonNullable<TtsPlaybackPlanCapableRequest['planning']['documentSource']>,
   storage: Pick<ArtifactStorage, 'readObject'>,
   s3Prefix: string,
+  pdfParserVersion: string,
 ): Promise<CanonicalTtsSourceUnit[]> {
   const artifactKey = parsedPdfArtifactKey({
     documentId: request.documentId,
     namespace: documentSource.namespace,
     prefix: s3Prefix,
+    parserVersion: pdfParserVersion,
   });
   const raw = await storage.readObject(artifactKey);
   const parsed = JSON.parse(Buffer.from(raw).toString('utf8')) as ParsedPdfDocument;
@@ -209,7 +212,10 @@ export function resolvePlaybackStartOrdinal(
   return match.ordinal;
 }
 
-export function computePlaybackPlanSignature(request: TtsPlaybackPlanCapableRequest): string {
+export function computePlaybackPlanSignature(
+  request: TtsPlaybackPlanCapableRequest,
+  pdfParserVersion: string | null = PDF_PARSER_VERSION,
+): string {
   const documentSource = request.planning.documentSource;
   return computeSegmentationSignature({
     maxBlockLength: request.planning.maxBlockLength ?? null,
@@ -224,7 +230,7 @@ export function computePlaybackPlanSignature(request: TtsPlaybackPlanCapableRequ
       documentSource?.namespace ?? null,
       request.storageUserId,
     ]),
-    ...(request.readerType === 'pdf' ? { pdfParserVersion: PDF_PARSER_VERSION } : {}),
+    ...(request.readerType === 'pdf' && pdfParserVersion ? { pdfParserVersion } : {}),
   });
 }
 
@@ -299,6 +305,7 @@ export async function resolveAndPersistTtsPlaybackPlan(input: {
   request: TtsPlaybackPlanCapableRequest;
   storage: ArtifactStorage;
   s3Prefix: string;
+  pdfParserVersion?: string | null;
   requireStartOrdinal?: boolean;
   attempt?: JobAttempt;
 }): Promise<{
@@ -307,13 +314,15 @@ export async function resolveAndPersistTtsPlaybackPlan(input: {
   plannedSegments: TtsPlaybackSegmentInput[];
   startOrdinal: number;
 }> {
-  const planSignature = computePlaybackPlanSignature(input.request);
+  const { pdfParserVersion = PDF_PARSER_VERSION } = input;
+  const planSignature = computePlaybackPlanSignature(input.request, pdfParserVersion);
   const computedPlanObjectKey = ttsPlaybackPlanArtifactKey({
     documentId: input.request.documentId,
     documentVersion: input.request.documentVersion,
     readerType: input.request.readerType,
     planSignature,
     prefix: input.s3Prefix,
+    pdfParserVersion,
   });
   const planObjectKey = input.request.planObjectKey ?? computedPlanObjectKey;
   const write = await prepareArtifactWrite(input.storage, planObjectKey, input.attempt);
@@ -327,7 +336,7 @@ export async function resolveAndPersistTtsPlaybackPlan(input: {
   if (!plannedSegments || (!historicalPdfPlan && plannedSegments.length === 0)) {
     plannedSegments = planTtsPlaybackSegments(
       input.request,
-      await resolvePlaybackSourceUnits(input.request, input.storage, input.s3Prefix),
+      await resolvePlaybackSourceUnits(input.request, input.storage, input.s3Prefix, pdfParserVersion ?? LEGACY_PDF_PARSER_VERSION),
     );
     const computed = plannedSegments;
     const winner = await publishOrAdoptArtifact(

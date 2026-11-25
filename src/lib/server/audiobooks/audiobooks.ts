@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { and, asc, eq, lt } from 'drizzle-orm';
+import { and, asc, eq, isNull, lt } from 'drizzle-orm';
 import {
   buildTtsPlaybackCanonicalSessionId,
   buildTtsPlaybackExportArtifactId,
@@ -24,7 +24,7 @@ import type {
 } from '@/lib/server/compute-worker/protocol';
 import { serverLogger } from '@/lib/server/logger';
 import { logDegraded } from '@/lib/server/errors/logging';
-import { storedRecord } from '@/lib/server/reader/bootstrap';
+import { ensurePdfReady, storedRecord } from '@/lib/server/reader/bootstrap';
 import { createAdmittedPlaybackPlanOperation, findPlaybackPlanOperation } from '@/lib/server/reader/playback';
 import {
   classifyExportArtifact,
@@ -249,7 +249,7 @@ async function advanceAudiobook(input: {
   const explicit = command === 'start' || command === 'retry-skipped';
   const runtimeConfig = await getRuntimeConfig();
   const client = new ComputeWorkerClient();
-  const { settingsHash, settingsJson, planning } = await buildTtsPlaybackPlanningInput(intent.parsed, scope);
+  const { settingsHash, settingsJson, planning } = await buildTtsPlaybackPlanningInput(intent.parsed, scope, intent.parsed.planObjectKey);
 
   const report = (fields: {
     generation: Audiobook['generation'];
@@ -305,6 +305,17 @@ async function advanceAudiobook(input: {
       if (!existing) return reportGeneration(command === 'stop' ? 'stopped' : 'idle');
       operation = existing;
     } else try {
+      if (scope.readerType === 'pdf') {
+        const pdf = await ensurePdfReady(documentId, scope, { retryPdf: explicit, throwAdmissionLimit: true });
+        if ('result' in pdf) {
+          if (pdf.result.status === 'error') {
+            return reportGeneration('failed', {
+              issue: { code: 'DOCUMENT_UNAVAILABLE', message: pdf.result.message },
+            });
+          }
+          return reportGeneration('preparing', { operationId: pdf.operationId });
+        }
+      }
       operation = await createAdmittedPlaybackPlanOperation({
         parsed: intent.parsed,
         scope,
@@ -557,7 +568,7 @@ async function advanceAudiobook(input: {
 }
 
 async function idFor(caller: AudiobookCaller, intent: AudiobookIntent): Promise<string> {
-  const { settingsHash } = await buildTtsPlaybackPlanningInput(intent.parsed, caller.scope);
+  const { settingsHash } = await buildTtsPlaybackPlanningInput(intent.parsed, caller.scope, intent.parsed.planObjectKey);
   return audiobookId(caller, intent, settingsHash);
 }
 
@@ -695,7 +706,7 @@ async function stopAudiobookUnlocked(
 
 /** Uncancelled whole-book requests on the same generation session as `intent`, which share its run. */
 async function requestsSharingSession(caller: AudiobookCaller, intent: AudiobookIntent): Promise<string[]> {
-  const { settingsHash } = await buildTtsPlaybackPlanningInput(intent.parsed, caller.scope);
+  const { settingsHash } = await buildTtsPlaybackPlanningInput(intent.parsed, caller.scope, intent.parsed.planObjectKey);
   const rows = await db.select().from(audiobookRequests).where(and(
     eq(audiobookRequests.userId, caller.scope.storageUserId),
     eq(audiobookRequests.documentId, intent.parsed.documentId),
@@ -705,7 +716,7 @@ async function requestsSharingSession(caller: AudiobookCaller, intent: Audiobook
     if (row.chapterIndex !== null || row.cancelledAt || Number(row.documentVersion) !== caller.scope.documentVersion) continue;
     const other = intentFromRow(row);
     if (!other) continue;
-    const planned = await buildTtsPlaybackPlanningInput(other.parsed, caller.scope);
+    const planned = await buildTtsPlaybackPlanningInput(other.parsed, caller.scope, other.parsed.planObjectKey);
     // The plan is part of the session's identity; a request without one yet adopts the current plan.
     const plans = [intent.parsed.planObjectKey, other.parsed.planObjectKey];
     if (planned.settingsHash === settingsHash && (plans.includes(undefined) || plans[0] === plans[1])) sharing.push(row.id);
@@ -866,6 +877,8 @@ export async function advanceAudiobooksAfterOperation(operationId: string, userI
   const rows = await db.select({ id: audiobookRequests.id }).from(audiobookRequests).where(and(
     eq(audiobookRequests.userId, userId),
     eq(audiobookRequests.documentId, documentId),
+    ...(operation?.subject.kind === 'pdf_layout'
+      ? [isNull(audiobookRequests.planObjectKey), isNull(audiobookRequests.cancelledAt)] : []),
   )) as Array<{ id: string }>;
   const caller: AudiobookCaller = { scope, subject: { userId, isAnonymous: false }, mayGenerate: true };
   for (const { id } of rows) {

@@ -190,6 +190,7 @@ export function validateTtsPlaybackSessionStartOrdinal(
 export async function buildTtsPlaybackPlanningInput(
   parsed: ParsedTtsPlaybackRequestBody,
   scope: ResolvedSegmentDocumentScope,
+  existingPlanObjectKey?: string,
 ): Promise<{
   settingsHash: string;
   settingsJson: string;
@@ -211,7 +212,7 @@ export async function buildTtsPlaybackPlanningInput(
     || scope.readerType === 'html';
   // An open reader or saved export may still use a plan from before an update.
   const pdfParserVersion = scope.readerType === 'pdf'
-    ? (parsed.planObjectKey ? pdfParserVersionForPlan(parsed.planObjectKey) : PDF_PARSER_VERSION)
+    ? (existingPlanObjectKey ? pdfParserVersionForPlan(existingPlanObjectKey) : PDF_PARSER_VERSION)
     : undefined;
 
   // The audio settings hash must vary with segmentation, not just voice: changing

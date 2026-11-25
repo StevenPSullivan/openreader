@@ -68,11 +68,12 @@ describe('bootstrap playback preparation', () => {
     const parsed = await resolveDefaultPlaybackRequest(documentId, pdfScope, DEFAULT_DOCUMENT_SETTINGS, preferences, 'en');
     if ('error' in parsed) throw new Error(parsed.error);
     const keyPrefix = `openreader/tts_playback_plan_v1/${documentId}/1/pdf/`;
-    const legacy = await buildTtsPlaybackPlanningInput({ ...parsed, planObjectKey: `${keyPrefix}abcdef01.json` }, pdfScope);
+    const legacyKey = `${keyPrefix}abcdef01.json`;
+    const legacy = await buildTtsPlaybackPlanningInput(parsed, pdfScope, legacyKey);
     const current = await buildTtsPlaybackPlanningInput(parsed, pdfScope);
-    const audioForVersion = async (version: string) => (await buildTtsPlaybackPlanningInput({
-      ...parsed, planObjectKey: `${keyPrefix}parser/${encodeURIComponent(version)}/abcdef01.json`,
-    }, pdfScope)).settingsHash;
+    const audioForVersion = async (version: string) => (await buildTtsPlaybackPlanningInput(
+      parsed, pdfScope, `${keyPrefix}parser/${encodeURIComponent(version)}/abcdef01.json`,
+    )).settingsHash;
 
     expect(legacy.settingsHash).toBe(buildTtsPlaybackSettingsHash(parsed.settings, {
       maxBlockLength: parsed.maxBlockLength ?? null, language: parsed.language ?? null,
@@ -80,6 +81,8 @@ describe('bootstrap playback preparation', () => {
       isPlainText: false, namespace: null,
     }));
     expect(legacy.settingsHash).not.toBe(current.settingsHash);
+    expect((await buildTtsPlaybackPlanningInput({ ...parsed, planObjectKey: legacyKey }, pdfScope)).settingsHash)
+      .toBe(current.settingsHash);
     expect(await audioForVersion(PDF_PARSER_VERSION)).toBe(current.settingsHash);
     expect(await audioForVersion('other-parser-version')).not.toBe(current.settingsHash);
   });

@@ -96,7 +96,7 @@ export async function POST(request: NextRequest) {
 
     const now = Date.now();
     const expiresAt = now + TTS_PLAYBACK_SESSION_TTL_MS;
-    const { settingsHash, settingsJson, planning } = await buildTtsPlaybackPlanningInput(parsed, scope);
+    const { settingsHash, settingsJson, planning } = await buildTtsPlaybackPlanningInput(parsed, scope, planObjectKey);
     const sessionId = buildTtsPlaybackCanonicalSessionId({
       storageUserId: scope.storageUserId,
       documentId: parsed.documentId,

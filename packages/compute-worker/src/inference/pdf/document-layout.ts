@@ -6,7 +6,6 @@ interface RotatedBaseline {
   dx: number;
   dy: number;
   advance: number;
-  spaceBefore: boolean;
 }
 
 export interface PdfTextItem {
@@ -16,6 +15,7 @@ export interface PdfTextItem {
   width: number;
   height: number;
   baselineY?: number;
+  spaceBefore?: boolean;
   rotation?: RotatedBaseline;
 }
 
@@ -117,14 +117,16 @@ function joinText(items: PdfTextItem[]): string {
     const wrappedBaseline = prev.baselineY !== undefined && item.baselineY !== undefined
       && item.baselineY > prev.baselineY + 2 && item.x < prev.x;
     const lineBreak = wrappedBaseline || (!sharesLineBand && lineJump > Math.max(2, Math.min(prev.height, item.height) * 0.6));
+    const explicitSpace = item.spaceBefore && prev.baselineY !== undefined && item.baselineY !== undefined
+      && Math.abs(item.baselineY - prev.baselineY) <= 2;
     const avgCharWidth = item.width / Math.max(1, item.text.length);
     const spaceThreshold = Math.max(avgCharWidth * 0.3, 2);
-    let needsSpace = Boolean(prev.rotation || item.rotation) || lineBreak || gap > spaceThreshold;
+    let needsSpace = Boolean(prev.rotation || item.rotation || explicitSpace) || lineBreak || gap > spaceThreshold;
     if (prev.rotation && item.rotation && sameBaseline(prev.rotation, item.rotation)) {
       const a = prev.rotation;
       const b = item.rotation;
       const baselineGap = (b.x - a.x) * a.dx + (b.y - a.y) * a.dy - a.advance;
-      needsSpace = b.spaceBefore || baselineGap > 2;
+      needsSpace = item.spaceBefore === true || baselineGap > 2;
     }
     out += needsSpace ? ` ${item.text}` : item.text;
     prev = item;

@@ -2,6 +2,7 @@ import { describe, expect, test } from 'vitest';
 import { createHash } from 'node:crypto';
 import { clearTtsPlaybackArtifacts } from '../../src/playback/cache-clear';
 import type { ArtifactStorage } from '../../src/infrastructure/storage';
+import { ttsPlaybackPlanArtifactKey } from '../../src/storage/artifact-addressing';
 import { listMemoryChildPrefixes } from '../fixtures/memory-storage';
 
 class MemoryStorage implements ArtifactStorage {
@@ -56,6 +57,11 @@ describe('playback cache clear', () => {
     await storage.putObject(`${prefix}/tts_playback_segments_audio_v1/users/user-1/docs/${documentId}/3/settings/audio.mp3`, Buffer.from('audio'));
     await storage.putObject(`${prefix}/tts_playback_segments_v1/users/${userHash}/docs/${documentId}/3/settings/segments/0.json`, Buffer.from('{}'));
     await storage.putObject(`${prefix}/tts_playback_plan_v1/${documentId}/3/pdf/plan.json`, Buffer.from('{}'));
+    const versionedPlan = (id: string) => ttsPlaybackPlanArtifactKey({
+      documentId: id, documentVersion: 3, readerType: 'pdf', prefix, planSignature: 'abcdef01',
+    });
+    await storage.putObject(versionedPlan(documentId), Buffer.from('{}'));
+    await storage.putObject(versionedPlan(foreignDocumentId), Buffer.from('{}'));
     const exportScope = `${prefix}/tts_playback_exports_v1/users/user-1/docs/${documentId}`;
     await storage.putObject(`${exportScope}/export-a/metadata.json`, Buffer.from(JSON.stringify({
       storageUserId: 'user-1', documentId, documentVersion: 3,
@@ -77,10 +83,11 @@ describe('playback cache clear', () => {
     expect(result).toEqual({
       deletedAudioObjects: 1,
       deletedSidecarObjects: 1,
-      deletedPlanObjects: 1,
+      deletedPlanObjects: 2,
       deletedExportObjects: 2,
     });
     expect(storage.objects.has(`${exportScope}/export-a/artifact.mp3`)).toBe(false);
+    expect(storage.objects.has(versionedPlan(foreignDocumentId))).toBe(true);
     expect(storage.objects.has(`${exportScope}/export-old/metadata.json`)).toBe(true);
     expect(storage.objects.has(`${prefix}/tts_playback_exports_v1/users/user-1/docs/${foreignDocumentId}/export-b/metadata.json`)).toBe(true);
   });

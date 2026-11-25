@@ -1,5 +1,6 @@
 import { afterAll, beforeAll, describe, expect, test, vi } from 'vitest';
 import Database from 'better-sqlite3';
+import { after } from 'next/server';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -17,6 +18,10 @@ let activateComputeAdmission: typeof import('@/lib/server/compute-limits/admissi
 let completeOperation: typeof import('@/app/api/internal/compute/limits/complete/route').POST;
 
 vi.mock('@/lib/server/audiobooks/audiobooks', () => ({ advanceAudiobooksAfterOperation: vi.fn() }));
+vi.mock('next/server', async (importOriginal) => ({
+  ...await importOriginal<typeof import('next/server')>(),
+  after: vi.fn(),
+}));
 
 function policy(boundary: 'strict' | 'soft_unit'): ComputeLimitPolicyDocument {
   const value = cloneComputeLimitPolicyDocument();
@@ -117,11 +122,14 @@ describe('compute usage limits', () => {
         'x-openreader-compute-admission-finished-at': String(finishedAt) },
       body: JSON.stringify({ operationId: 'recovered-pdf', state: 'succeeded' }),
     }) as Parameters<typeof completeOperation>[0]);
+    vi.mocked(after).mockClear();
     expect((await callback()).status).toBe(503);
+    expect(after).not.toHaveBeenCalled();
     await activateComputeAdmission({ admissionId: first.admissionId!, operationId: 'recovered-pdf', leaseSeconds: 60 });
     // An idempotent pre-creation activation must preserve the linkage.
     await activateComputeAdmission({ admissionId: first.admissionId!, leaseSeconds: 60 });
     expect((await callback()).status).toBe(204);
+    expect(after).toHaveBeenCalledWith(expect.any(Function));
     const second = await reserve('restart-second');
     expect(second.allowed).toBe(true);
     await activateComputeAdmission({ admissionId: second.admissionId!, leaseSeconds: 60, nowMs: finishedAt + 1 });

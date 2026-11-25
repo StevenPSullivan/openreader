@@ -1,6 +1,7 @@
 import { describe, expect, test, vi } from 'vitest';
 import { PDF_PARSER_VERSION, pdfParserVersionForPlan } from '@openreader/tts/pdf-sources';
 import { computeSegmentationSignature } from '@openreader/tts/segments';
+import { createTtsPlaybackPlanHandler } from '../../src/jobs/playback/plan-job';
 import {
   computePlaybackPlanSignature,
   planTtsPlaybackSegments,
@@ -69,6 +70,31 @@ function baseRequest(planning: Record<string, unknown>) {
 }
 
 describe('worker-owned TTS playback source derivation', () => {
+  test('finishes a pre-upgrade queued PDF plan from the layout it was queued with', async () => {
+    const request = baseRequest({ documentSource: { namespace: null, extent: 'document' } });
+    const legacyLayoutKey = parsedPdfArtifactKey({
+      documentId: DOCUMENT_ID, namespace: null, prefix: PREFIX,
+      parserVersion: 'pp-doclayoutv3-onnx@800+pdfjs@4.8.69',
+    });
+    const readObject = vi.fn(async (key: string) => {
+      if (key !== legacyLayoutKey) throw new Error(`Missing object: ${key}`);
+      return Uint8Array.from(Buffer.from(JSON.stringify(parsedPdfArtifact()))).buffer;
+    });
+    const putObject = vi.fn();
+    const handler = createTtsPlaybackPlanHandler({
+      storage: { readObject, putObject } as unknown as ArtifactStorage, s3Prefix: PREFIX,
+    } as Parameters<typeof createTtsPlaybackPlanHandler>[0]);
+    const { sessionId: _sessionId, ...job } = request;
+
+    const result = await handler(job, 0);
+    expect(result.planObjectKey).toBe(`${PREFIX}/tts_playback_plan_v1/${DOCUMENT_ID}/1/pdf/${result.planSignature}.json`);
+    expect(result.plannedCount).toBeGreaterThan(0);
+    expect(putObject).toHaveBeenCalledOnce();
+    const [writtenKey, writtenBody] = putObject.mock.calls[0]!;
+    expect(writtenKey).toBe(result.planObjectKey);
+    expect(JSON.parse(writtenBody.toString())).toMatchObject({ settingsHash: job.settingsHash });
+  });
+
   test.each(['', 'parser/older-parser/'])('never rebuilds a historical PDF plan under %j', async (version) => {
     const planObjectKey = `${PREFIX}/tts_playback_plan_v1/${DOCUMENT_ID}/1/pdf/${version}abcdef01.json`;
     const segments = [{ ordinal: 0, segmentKey: 'existing', text: 'Older PDF text.', locator: null }];

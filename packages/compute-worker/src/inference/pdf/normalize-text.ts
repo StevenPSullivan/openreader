@@ -101,13 +101,13 @@ export function normalizeTextItemsForLayout(
         y: Math.max(0, top),
         width: Math.max(...xs) - left,
         height: Math.max(...ys) - top,
+        ...(explicitSpace ? { spaceBefore: true } : {}),
         rotation: {
           x: origin.x,
           y: origin.y,
           dx: baselineX / viewportBaselineLength,
           dy: baselineY / viewportBaselineLength,
           advance: width * viewportBaselineLength / baselineLength,
-          spaceBefore: explicitSpace,
         },
       });
       continue;
@@ -121,6 +121,7 @@ export function normalizeTextItemsForLayout(
       width,
       height,
       baselineY: origin.y,
+      ...(explicitSpace ? { spaceBefore: true } : {}),
     });
   }
   return normalized;

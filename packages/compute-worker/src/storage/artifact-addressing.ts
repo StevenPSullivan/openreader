@@ -68,12 +68,15 @@ export function ttsPlaybackPlanArtifactKey(input: {
   readerType: 'pdf' | 'epub' | 'html';
   planSignature: string;
   prefix: string;
+  pdfParserVersion?: string | null;
 }): string {
   if (!SAFE_PLAN_SIGNATURE_REGEX.test(input.planSignature)) {
     throw new Error(`Invalid playback plan signature: ${input.planSignature}`);
   }
   const version = Math.max(0, Math.floor(input.documentVersion));
-  const parserPath = input.readerType === 'pdf' ? `parser/${encodeParserVersion(PDF_PARSER_VERSION)}/` : '';
+  const { pdfParserVersion = PDF_PARSER_VERSION } = input;
+  const parserPath = input.readerType === 'pdf' && pdfParserVersion
+    ? `parser/${encodeParserVersion(pdfParserVersion)}/` : '';
   return `${ttsPlaybackPlanArtifactPrefix(input)}${version}/${input.readerType}/${parserPath}${input.planSignature}.json`;
 }
 

@@ -96,6 +96,22 @@ describe('normalizeTextItemsForLayout', () => {
     ]);
   });
 
+  test('keeps narrow spaces without adding spaces between adjacent fragments', () => {
+    const runs = [
+      makeTextItem('Net', [10, 0, 0, 10, 100, 300], 15),
+      makeTextItem(' ', [10, 0, 0, 10, 115, 300], 1.5),
+      makeTextItem('pro', [10, 0, 0, 10, 116.5, 300], 13),
+      makeTextItem('fit', [10, 0, 0, 10, 129.5, 300], 11),
+    ];
+    const normalized = normalizeTextItemsForLayout(runs, {
+      height: 800,
+      transform: [1, 0, 0, -1, 0, 800],
+    });
+
+    const blocks = mergeTextWithRegions([{ label: 'chart', bbox: [90, 475, 160, 510] }], normalized);
+    expect(blocks.map(({ text }) => text)).toEqual(['Net profit']);
+  });
+
   test('keeps a smaller inline citation in left-to-right order on its baseline', () => {
     const body = [
       makeTextItem('Sentence one', [12, 0, 0, 12, 50, 300], 65),

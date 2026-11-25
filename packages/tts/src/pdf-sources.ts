@@ -1,14 +1,17 @@
 import type { CanonicalTtsSourceUnit } from './segment-plan';
 import type { TTSSegmentLocator } from './types';
 
-export const PDF_PARSER_VERSION = 'pp-doclayoutv3-onnx@800+pdfjs@4.8.69+layout@2.1';
+export const LEGACY_PDF_PARSER_VERSION = 'pp-doclayoutv3-onnx@800+pdfjs@4.8.69';
+export const PDF_PARSER_VERSION = `${LEGACY_PDF_PARSER_VERSION}+layout@2.2`;
 
 /** Plans created before layout versioning use the unversioned audio cache. */
 export function pdfParserVersionForPlan(planObjectKey: string): string | undefined {
   const encoded = /\/pdf\/parser\/([^/]+)\/[a-f0-9]{8,64}\.json$/i.exec(planObjectKey)?.[1];
   if (!encoded) return undefined;
   try {
-    return decodeURIComponent(encoded);
+    const version = decodeURIComponent(encoded);
+    if (version === '.' || version === '..' || /[/\\]/.test(version)) return undefined;
+    return version;
   } catch {
     return undefined;
   }

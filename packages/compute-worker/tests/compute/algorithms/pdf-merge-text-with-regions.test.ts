@@ -83,7 +83,7 @@ describe('mergeTextWithRegions', () => {
   test.each(['header', 'doc_title', 'paragraph_title'] as const)(
     'does not reclassify a rotated %s as graphic text',
     (label) => {
-      const rotation = { x: 15, y: 50, dx: 0, dy: -1, advance: 18, spaceBefore: false };
+      const rotation = { x: 15, y: 50, dx: 0, dy: -1, advance: 18 };
       const merged = mergeTextWithRegions([
         { bbox: [0, 0, 100, 100], label: 'chart', confidence: 0.99 },
         { bbox: [35, 20, 95, 70], label, confidence: 0.8 },

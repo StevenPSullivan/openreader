@@ -25,7 +25,7 @@ export async function resolveDocumentStorageScope(
   if (!parsed) return NextResponse.json({ error: 'Invalid request payload' }, { status: 400 });
   const scope = await resolveSegmentDocumentScope(request, parsed.documentId);
   if (scope instanceof Response) return scope;
-  const { settingsHash } = await buildTtsPlaybackPlanningInput(parsed, scope);
+  const { settingsHash } = await buildTtsPlaybackPlanningInput(parsed, scope, parsed.planObjectKey);
   return { documentId: parsed.documentId, scope, settingsHash };
 }
 

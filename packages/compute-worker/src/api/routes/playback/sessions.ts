@@ -1,4 +1,5 @@
 import { buildTtsPlaybackCanonicalSessionId } from '@openreader/tts/playback-scope';
+import { PDF_PARSER_VERSION } from '@openreader/tts/pdf-sources';
 import { resolveTtsPlaybackSessionInstanceId } from '../../../playback/storage';
 import { hashOpKey } from '../../../infrastructure/nats-adapters';
 import type { WorkerOperationRequest } from '../../../operations/contracts';
@@ -398,7 +399,10 @@ export function registerPlaybackJobRoutes(
         settingsHash: parsed.data.settingsHash,
         planSignature,
       }),
-      payload: parsed.data,
+      payload: {
+        ...parsed.data,
+        ...(parsed.data.readerType === 'pdf' ? { pdfParserVersion: PDF_PARSER_VERSION } : {}),
+      },
     };
     await ensureOrphanedOpRecovery();
     const op = await deps.orchestrator.enqueueOrReuse(requestOp);

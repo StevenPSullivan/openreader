@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, test, vi } from 'vitest';
 import { NextRequest } from 'next/server';
+import { PDF_PARSER_VERSION } from '@openreader/tts/pdf-sources';
 import { responseProblems } from './support/openapi-schema';
 
 const hoisted = vi.hoisted(() => ({
@@ -28,6 +29,7 @@ const hoisted = vi.hoisted(() => ({
 // A small table: filters compare the mocked column names below.
 vi.mock('drizzle-orm', () => ({
   eq: (column: string, value: unknown) => [[column, value]],
+  isNull: (column: string) => [[column, null]],
   and: (...filters: Array<Array<[string, unknown]>>) => filters.flat(),
   lt: (column: string, value: number) => [[column, { below: value }]],
   asc: (column: string) => column,
@@ -35,7 +37,10 @@ vi.mock('drizzle-orm', () => ({
 }));
 
 vi.mock('@openreader/database/schema', () => ({
-  audiobookRequests: { id: 'id', userId: 'userId', documentId: 'documentId', planObjectKey: 'planObjectKey', createdAt: 'createdAt' },
+  audiobookRequests: {
+    id: 'id', userId: 'userId', documentId: 'documentId', planObjectKey: 'planObjectKey',
+    createdAt: 'createdAt', cancelledAt: 'cancelledAt',
+  },
   documentSettings: {},
   documents: {},
   userPreferences: {},
@@ -50,7 +55,7 @@ vi.mock('@openreader/database', () => {
     filters.every(([column, value]) => (
       value && typeof value === 'object' && 'below' in value
         ? Number(row[column]) < Number(value.below)
-        : row[column] === value
+        : (row[column] ?? null) === value
     ))
   );
   return {
@@ -664,6 +669,35 @@ describe('/api/v1/documents/[id]/audiobooks', () => {
     expect(JSON.stringify(hoisted.rows)).not.toContain('must-not-persist');
   });
 
+  test.each(['', 'parser/previous-pdf-parser/', `parser/${encodeURIComponent(PDF_PARSER_VERSION)}/`])(
+    'accepts an owned PDF plan on export with path %j',
+    async (parserPath) => {
+      hoisted.readerType.value = 'pdf';
+      hoisted.readPlan.mockResolvedValue({ artifact: {
+        storageUserId: 'user-1', documentId: 'doc-1', documentVersion: 1, readerType: 'pdf',
+      } });
+      hoisted.resolveSession.mockResolvedValue(completeSession);
+      const planObjectKey = `openreader/tts_playback_plan_v1/doc-1/1/pdf/${parserPath}abcdef12.json`;
+      const response = await start({ planObjectKey });
+      expect(response.status).toBeLessThan(300);
+      expect(hoisted.readPlan).toHaveBeenCalledWith(planObjectKey);
+      expect(hoisted.rows[0]?.planObjectKey).toBe(planObjectKey);
+    },
+  );
+
+  test('refuses invalid or out-of-scope versioned PDF plan keys before reading them', async () => {
+    hoisted.readerType.value = 'pdf';
+    for (const planObjectKey of [
+      'openreader/tts_playback_plan_v1/doc-2/1/pdf/parser/previous/abcdef12.json',
+      'openreader/tts_playback_plan_v1/doc-1/1/pdf/parser/../abcdef12.json',
+      'openreader/tts_playback_plan_v1/doc-1/1/pdf/parser/%2F/abcdef12.json',
+      'openreader/tts_playback_plan_v1/doc-1/1/pdf/parser/previous/pdf/parser/current/abcdef12.json',
+    ]) {
+      expect((await start({ planObjectKey })).status).toBe(403);
+    }
+    expect(hoisted.readPlan).not.toHaveBeenCalled();
+  });
+
   test('rejects a plan for another owner before starting work', async () => {
     hoisted.readPlan.mockResolvedValue({ artifact: {
       storageUserId: 'other-user', documentId: 'doc-1', documentVersion: 1, readerType: 'html',
@@ -904,6 +938,38 @@ describe('/api/v1/documents/[id]/audiobooks', () => {
 
       expect(hoisted.createPlayback).toHaveBeenCalledOnce();
       expect(hoisted.rows[0]?.planObjectKey).toBe(planKey());
+    });
+
+    test('prepares the current layout when a saved PDF export has no plan after an update', async () => {
+      hoisted.readerType.value = 'pdf';
+      hoisted.ensurePdf.mockResolvedValue({ parsedDocument: { pages: [] } });
+      hoisted.plan.mockResolvedValueOnce({ opId: 'old-plan-op', status: 'running' });
+      const { json: book } = await start({ planObjectKey: undefined });
+      expect(book.status).toBe('preparing');
+      hoisted.ensurePdf.mockResolvedValue({
+        result: { status: 'pending' }, operationId: 'pdf-layout-op',
+      });
+      hoisted.plan.mockClear().mockResolvedValue({ opId: 'new-plan-op', status: 'queued' });
+
+      const { json: pending } = await get(book.id);
+      expect(pending.generation).toMatchObject({ state: 'preparing', operationId: 'pdf-layout-op' });
+      expect(hoisted.plan).not.toHaveBeenCalled();
+
+      const savedRow = hoisted.rows[0]!;
+      hoisted.rows.push(
+        { ...savedRow, id: 'existing-plan', planObjectKey: planKey() },
+        { ...savedRow, id: 'cancelled', cancelledAt: Date.now() },
+      );
+      hoisted.getOperation.mockResolvedValueOnce({
+        opId: 'pdf-layout-op', subject: { kind: 'pdf_layout', documentId: 'doc-1' },
+      });
+      hoisted.ensurePdf.mockResolvedValue({ parsedDocument: { pages: [] } });
+      const { advanceAudiobooksAfterOperation } = await import('@/lib/server/audiobooks/audiobooks');
+      await advanceAudiobooksAfterOperation('pdf-layout-op', 'user-1');
+      expect(hoisted.plan).toHaveBeenCalledOnce();
+      expect(hoisted.resolveSession).not.toHaveBeenCalled();
+      const { json: resumed } = await get(book.id);
+      expect(resumed.generation).toMatchObject({ state: 'preparing', operationId: 'new-plan-op' });
     });
   });
 

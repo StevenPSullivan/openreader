@@ -111,6 +111,7 @@ export interface TtsPlaybackPlanJobRequest {
   readerType: 'pdf' | 'epub' | 'html';
   settingsHash: string;
   settingsJson: unknown;
+  pdfParserVersion?: string;
   planning: TtsPlaybackJobRequest['planning'];
 }
 
