@@ -19,6 +19,7 @@ const hoisted = vi.hoisted(() => ({
   storageLimit: vi.fn(),
   findPlan: vi.fn(),
   ensurePdf: vi.fn(),
+  preparePdfLayout: vi.fn(),
   settingsHash: vi.fn(),
   readerType: { value: 'html' },
   scopes: { value: ['documents:read', 'documents:write', 'audio:generate'] },
@@ -105,6 +106,7 @@ vi.mock('@openreader/database', () => {
 vi.mock('@/lib/server/reader/bootstrap', () => ({
   storedRecord: (value: unknown) => (typeof value === 'string' ? JSON.parse(value) : value),
   ensurePdfReady: hoisted.ensurePdf,
+  preparePdfLayout: hoisted.preparePdfLayout,
   detectParsedPdfLanguage: vi.fn(),
 }));
 
@@ -168,9 +170,9 @@ vi.mock('@/lib/server/tts/playback-request', async (importOriginal) => ({
 }));
 
 vi.mock('@/lib/server/tts/segments-auth', () => ({
-  resolveUserDocumentScope: vi.fn(async () => ({
-    userId: 'user-1',
-    storageUserId: 'user-1',
+  resolveUserDocumentScope: vi.fn(async ({ userId }: { userId: string }) => ({
+    userId,
+    storageUserId: userId,
     documentVersion: 1,
     readerType: hoisted.readerType.value,
     isAnonymousUser: false,
@@ -300,6 +302,7 @@ describe('/api/v1/documents/[id]/audiobooks', () => {
     hoisted.rows.length = 0;
     hoisted.isAnonymous.value = false;
     hoisted.readerType.value = 'html';
+    hoisted.preparePdfLayout.mockResolvedValue({ objectKey: 'fixture-pdf-layout.json' });
     hoisted.scopes.value = ['documents:read', 'documents:write', 'audio:generate'];
     hoisted.settingsHash.mockReturnValue('settings-1');
     hoisted.findPlan.mockResolvedValue(null);
@@ -942,11 +945,10 @@ describe('/api/v1/documents/[id]/audiobooks', () => {
 
     test('prepares the current layout when a saved PDF export has no plan after an update', async () => {
       hoisted.readerType.value = 'pdf';
-      hoisted.ensurePdf.mockResolvedValue({ parsedDocument: { pages: [] } });
       hoisted.plan.mockResolvedValueOnce({ opId: 'old-plan-op', status: 'running' });
       const { json: book } = await start({ planObjectKey: undefined });
       expect(book.status).toBe('preparing');
-      hoisted.ensurePdf.mockResolvedValue({
+      hoisted.preparePdfLayout.mockResolvedValue({
         result: { status: 'pending' }, operationId: 'pdf-layout-op',
       });
       hoisted.plan.mockClear().mockResolvedValue({ opId: 'new-plan-op', status: 'queued' });
@@ -957,16 +959,20 @@ describe('/api/v1/documents/[id]/audiobooks', () => {
 
       const savedRow = hoisted.rows[0]!;
       hoisted.rows.push(
+        { ...savedRow, id: 'second-account', userId: 'user-2' },
         { ...savedRow, id: 'existing-plan', planObjectKey: planKey() },
         { ...savedRow, id: 'cancelled', cancelledAt: Date.now() },
       );
       hoisted.getOperation.mockResolvedValueOnce({
-        opId: 'pdf-layout-op', subject: { kind: 'pdf_layout', documentId: 'doc-1' },
+        opId: 'pdf-layout-op', subject: { kind: 'pdf_layout', documentId: 'doc-1', namespace: null },
       });
-      hoisted.ensurePdf.mockResolvedValue({ parsedDocument: { pages: [] } });
+      hoisted.preparePdfLayout.mockResolvedValue({ objectKey: 'fixture-pdf-layout.json' });
       const { advanceAudiobooksAfterOperation } = await import('@/lib/server/audiobooks/audiobooks');
-      await advanceAudiobooksAfterOperation('pdf-layout-op', 'user-1');
-      expect(hoisted.plan).toHaveBeenCalledOnce();
+      await advanceAudiobooksAfterOperation('pdf-layout-op');
+      expect(hoisted.plan).toHaveBeenCalledTimes(2);
+      expect(hoisted.plan).toHaveBeenCalledWith(expect.objectContaining({
+        scope: expect.objectContaining({ userId: 'user-2' }),
+      }));
       expect(hoisted.resolveSession).not.toHaveBeenCalled();
       const { json: resumed } = await get(book.id);
       expect(resumed.generation).toMatchObject({ state: 'preparing', operationId: 'new-plan-op' });

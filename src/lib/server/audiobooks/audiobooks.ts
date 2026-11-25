@@ -24,7 +24,7 @@ import type {
 } from '@/lib/server/compute-worker/protocol';
 import { serverLogger } from '@/lib/server/logger';
 import { logDegraded } from '@/lib/server/errors/logging';
-import { ensurePdfReady, storedRecord } from '@/lib/server/reader/bootstrap';
+import { preparePdfLayout, storedRecord } from '@/lib/server/reader/bootstrap';
 import { createAdmittedPlaybackPlanOperation, findPlaybackPlanOperation } from '@/lib/server/reader/playback';
 import {
   classifyExportArtifact,
@@ -306,7 +306,7 @@ async function advanceAudiobook(input: {
       operation = existing;
     } else try {
       if (scope.readerType === 'pdf') {
-        const pdf = await ensurePdfReady(documentId, scope, { retryPdf: explicit, throwAdmissionLimit: true });
+        const pdf = await preparePdfLayout(documentId, scope, { retryPdf: explicit, throwAdmissionLimit: true });
         if ('result' in pdf) {
           if (pdf.result.status === 'error') {
             return reportGeneration('failed', {
@@ -859,29 +859,31 @@ export async function whenAudiobookFree<T>(run: () => Promise<T>, delaysMs: read
  * device ID: only signed-in users' requests advance here, with limits keyed on
  * the stored user. A guest's export is compiled when they next have it open.
  */
-export async function advanceAudiobooksAfterOperation(operationId: string, userId: string): Promise<void> {
+export async function advanceAudiobooksAfterOperation(operationId: string, admissionUserId?: string): Promise<void> {
   if (!isComputeWorkerAvailable()) return;
-  const authSchema = process.env.POSTGRES_URL ? authSchemaPostgres : authSchemaSqlite;
-  const users = await db.select({ isAnonymous: authSchema.user.isAnonymous })
-    .from(authSchema.user)
-    .where(eq(authSchema.user.id, userId))
-    .limit(1) as Array<{ isAnonymous: boolean | null }>;
-  if (!users[0] || users[0].isAnonymous) return;
-
   const operation = await new ComputeWorkerClient().getOperation(operationId);
   const documentId = (operation?.subject as { documentId?: unknown } | undefined)?.documentId;
-  if (typeof documentId !== 'string') return;
-  const scope = await resolveUserDocumentScope({ userId, isAnonymous: false }, documentId);
-  if (!scope) return;
-
-  const rows = await db.select({ id: audiobookRequests.id }).from(audiobookRequests).where(and(
-    eq(audiobookRequests.userId, userId),
+  // One PDF layout can unblock audiobook requests from several owners of that PDF.
+  const sharedPdfLayout = operation?.subject.kind === 'pdf_layout' && operation.subject.namespace === null;
+  if (typeof documentId !== 'string' || !documentId || (!sharedPdfLayout && !admissionUserId)) return;
+  const rows = await db.select({ id: audiobookRequests.id, userId: audiobookRequests.userId }).from(audiobookRequests).where(and(
     eq(audiobookRequests.documentId, documentId),
-    ...(operation?.subject.kind === 'pdf_layout'
-      ? [isNull(audiobookRequests.planObjectKey), isNull(audiobookRequests.cancelledAt)] : []),
-  )) as Array<{ id: string }>;
-  const caller: AudiobookCaller = { scope, subject: { userId, isAnonymous: false }, mayGenerate: true };
-  for (const { id } of rows) {
+    sharedPdfLayout
+      ? and(isNull(audiobookRequests.planObjectKey), isNull(audiobookRequests.cancelledAt))
+      : eq(audiobookRequests.userId, admissionUserId!),
+  )) as Array<{ id: string; userId: string }>;
+  const authSchema = process.env.POSTGRES_URL ? authSchemaPostgres : authSchemaSqlite;
+  const callers = new Map<string, AudiobookCaller | null>();
+  for (const { id, userId } of rows) {
+    if (!callers.has(userId)) {
+      const [user] = await db.select({ isAnonymous: authSchema.user.isAnonymous })
+        .from(authSchema.user).where(eq(authSchema.user.id, userId)).limit(1);
+      const subject = { userId, isAnonymous: false };
+      const scope = user && !user.isAnonymous ? await resolveUserDocumentScope(subject, documentId) : null;
+      callers.set(userId, scope ? { scope, subject, mayGenerate: true } : null);
+    }
+    const caller = callers.get(userId);
+    if (!caller) continue;
     await whenAudiobookFree(() => getAudiobook(caller, id, documentId), SIGNAL_RETRY_DELAYS_MS).catch((error: unknown) => {
       logDegraded(serverLogger, {
         event: 'audiobooks.advance_signal.failed',

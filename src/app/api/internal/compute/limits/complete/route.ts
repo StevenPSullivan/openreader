@@ -59,12 +59,10 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     });
   }
   const audiobookStep = rows.find((row) => AUDIOBOOK_STEP_ACTIONS.has(row.action));
-  const audiobookUsers = new Set(rows.filter((row) => row.action === 'pdf_layout').map((row) => row.userId));
-  if (audiobookStep) audiobookUsers.add(audiobookStep.userId);
   // The worker awaits this callback before acknowledging its job, so the next
   // step runs after the response. If this is lost, the next GET advances it.
-  for (const userId of audiobookUsers) {
-    after(() => advanceAudiobooksAfterOperation(parsed.operationId, userId).catch((advanceError: unknown) => {
+  if (audiobookStep || rows.some((row) => row.action === 'pdf_layout')) {
+    after(() => advanceAudiobooksAfterOperation(parsed.operationId, audiobookStep?.userId).catch((advanceError: unknown) => {
       logDegraded(serverLogger, {
         event: 'audiobooks.advance_signal.failed',
         msg: 'Failed to advance audiobooks after a worker operation finished',

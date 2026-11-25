@@ -85,11 +85,11 @@ function toReadingPosition(row: {
   };
 }
 
-export async function ensurePdfReady(
+export async function preparePdfLayout(
   documentId: string,
   scope: ResolvedSegmentDocumentScope,
   options: ReaderBootstrapResolveOptions,
-): Promise<ReaderBootstrapResolution | { parsedDocument: ParsedPdfDocument }> {
+): Promise<ReaderBootstrapResolution | { objectKey: string }> {
   const input = {
     documentId,
     namespace: null,
@@ -153,38 +153,37 @@ export async function ensurePdfReady(
     const readiness = resolvePdfOperationReadiness(currentOperation);
     if (readiness) return readiness;
   }
-  if (resolved.artifact) {
-    try {
-      const object = await getS3InternalClient().send(new GetObjectCommand({
-        Bucket: getS3Config().bucket,
-        Key: resolved.artifact.objectKey,
-      }));
-      const body = await object.Body?.transformToString();
-      if (!body) throw new Error('Parsed PDF artifact is empty');
-      const parsedDocument = JSON.parse(body) as ParsedPdfDocument;
-      if (!Array.isArray(parsedDocument.pages)) {
-        throw new Error('Parsed PDF artifact does not contain pages');
-      }
-      return { parsedDocument };
-    } catch {
-      return {
-        result: {
-          status: 'error',
-          message: 'PDF preparation completed without a readable artifact.',
-          retryable: true,
-        },
-      };
-    }
-  }
-  return {
-    result: {
-      status: 'error',
-      message: 'PDF preparation completed without a readable artifact.',
-      retryable: true,
-    },
-  };
+  return resolved.artifact ? { objectKey: resolved.artifact.objectKey } : unreadablePdfLayout();
 }
 
+function unreadablePdfLayout(): ReaderBootstrapResolution {
+  return { result: {
+    status: 'error',
+    message: 'PDF preparation completed without a readable artifact.',
+    retryable: true,
+  } };
+}
+
+export async function ensurePdfReady(
+  documentId: string,
+  scope: ResolvedSegmentDocumentScope,
+  options: ReaderBootstrapResolveOptions,
+): Promise<ReaderBootstrapResolution | { parsedDocument: ParsedPdfDocument }> {
+  const layout = await preparePdfLayout(documentId, scope, options);
+  if ('result' in layout) return layout;
+  try {
+    const object = await getS3InternalClient().send(new GetObjectCommand({
+      Bucket: getS3Config().bucket,
+      Key: layout.objectKey,
+    }));
+    const body = await object.Body?.transformToString();
+    if (!body) return unreadablePdfLayout();
+    const parsedDocument = JSON.parse(body) as ParsedPdfDocument;
+    return Array.isArray(parsedDocument.pages) ? { parsedDocument } : unreadablePdfLayout();
+  } catch {
+    return unreadablePdfLayout();
+  }
+}
 
 /** Samples a bounded prefix so large PDFs do not allocate a second full text. */
 export function detectParsedPdfLanguage(parsedDocument: ParsedPdfDocument): string | null {

@@ -47,10 +47,11 @@ interface ReadingLine {
 
 function horizontalLines(items: PdfTextItem[]): ReadingLine[] {
   const lines: Array<ReadingLine & { baselineY?: number }> = [];
+  const minHeight = items.reduce((min, item) => Math.min(min, item.height), Infinity);
   for (const item of items) {
     const { x, y, baselineY } = item;
     // A drop cap can sit on a later baseline while starting the first line.
-    const spansEarlierLine = baselineY !== undefined && /^\p{L}$/u.test(item.text.trim())
+    const spansEarlierLine = baselineY !== undefined && item.height >= 2 * minHeight && /^\p{L}$/u.test(item.text.trim())
       && items.some(other => other.baselineY !== undefined
         && other.baselineY < baselineY - 2 && other.baselineY > y
         && other.x >= x + item.width - 2 && other.height * 2 <= item.height);
