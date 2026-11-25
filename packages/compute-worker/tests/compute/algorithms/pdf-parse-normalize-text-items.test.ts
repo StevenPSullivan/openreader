@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'vitest';
 
 import { mergeTextWithRegions } from '../../../src/inference/pdf/document-layout';
-import { normalizeTextItemsForLayout } from '../../../src/inference/pdf/normalize-text';
+import { normalizeTextItemsForLayout, scaleTextItemForLayout } from '../../../src/inference/pdf/normalize-text';
 import type { TextItem } from 'pdfjs-dist/types/src/display/api';
 
 function makeTextItem(
@@ -100,6 +100,7 @@ describe('normalizeTextItemsForLayout', () => {
     const runs = [
       makeTextItem('Net', [10, 0, 0, 10, 100, 300], 15),
       makeTextItem(' ', [10, 0, 0, 10, 115, 300], 1.5),
+      makeTextItem('Ignored', [10, 5, 2, 10, 116, 300], 1),
       makeTextItem('pro', [10, 0, 0, 10, 116.5, 300], 13),
       makeTextItem('fit', [10, 0, 0, 10, 129.5, 300], 11),
     ];
@@ -109,6 +110,17 @@ describe('normalizeTextItemsForLayout', () => {
     });
 
     const blocks = mergeTextWithRegions([{ label: 'chart', bbox: [90, 475, 160, 510] }], normalized);
+    expect(blocks.map(({ text }) => text)).toEqual(['Net profit']);
+  });
+
+  test('uses the layout coordinates for gaps along a rotated label', () => {
+    const normalized = normalizeTextItemsForLayout([
+      makeTextItem('Net', [0, 10, -10, 0, 112, 300], 15),
+      makeTextItem('profit', [0, 10, -10, 0, 112, 316.5], 24),
+    ], { height: 800, transform: [1, 0, 0, -1, 0, 800] });
+    const items = normalized.map(item => scaleTextItemForLayout(item, 1.4, 1.5));
+
+    const blocks = mergeTextWithRegions([{ label: 'chart', bbox: [130, 675, 190, 760] }], items);
     expect(blocks.map(({ text }) => text)).toEqual(['Net profit']);
   });
 

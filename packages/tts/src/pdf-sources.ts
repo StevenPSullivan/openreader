@@ -2,7 +2,7 @@ import type { CanonicalTtsSourceUnit } from './segment-plan';
 import type { TTSSegmentLocator } from './types';
 
 export const LEGACY_PDF_PARSER_VERSION = 'pp-doclayoutv3-onnx@800+pdfjs@4.8.69';
-export const PDF_PARSER_VERSION = `${LEGACY_PDF_PARSER_VERSION}+layout@2.2`;
+export const PDF_PARSER_VERSION = `${LEGACY_PDF_PARSER_VERSION}+layout@2.3`;
 
 /** Plans created before layout versioning use the unversioned audio cache. */
 export function pdfParserVersionForPlan(planObjectKey: string): string | undefined {

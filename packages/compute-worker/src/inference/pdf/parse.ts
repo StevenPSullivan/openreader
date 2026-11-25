@@ -7,7 +7,7 @@ import { configurePdfjsNodeRuntime, resolvePdfjsStandardFontDataUrl } from './pd
 import { PDF_PARSER_VERSION } from '../../operations/contracts';
 import { stitchCrossPageBlocks } from './stitch';
 import { renderPage } from './render';
-import { normalizeTextItemsForLayout } from './normalize-text';
+import { normalizeTextItemsForLayout, scaleTextItemForLayout } from './normalize-text';
 import type { ModelDownloadProgressHandler } from '../model-download';
 
 export interface PdfPageCheckpoint {
@@ -103,14 +103,7 @@ export async function parsePdf(input: ParsePdfInput): Promise<ParsedPdfDocument>
       });
       const scaleX = rendered.width / Math.max(1, viewport.width);
       const scaleY = rendered.height / Math.max(1, viewport.height);
-      const layoutTextItems = textItems.map((item) => ({
-        ...item,
-        x: item.x * scaleX,
-        y: item.y * scaleY,
-        width: item.width * scaleX,
-        height: item.height * scaleY,
-        baselineY: item.baselineY === undefined ? undefined : item.baselineY * scaleY,
-      }));
+      const layoutTextItems = textItems.map(item => scaleTextItemForLayout(item, scaleX, scaleY));
       const regions = await runLayoutModel({
         pageWidth: rendered.width,
         pageHeight: rendered.height,

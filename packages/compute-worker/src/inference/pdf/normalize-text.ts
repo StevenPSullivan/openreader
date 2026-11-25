@@ -55,8 +55,6 @@ export function normalizeTextItemsForLayout(
       spaceBefore = true;
       continue;
     }
-    const explicitSpace = spaceBefore;
-    spaceBefore = false;
     const transform = item.transform;
     if (!Array.isArray(transform) || transform.length < 6) continue;
 
@@ -101,7 +99,7 @@ export function normalizeTextItemsForLayout(
         y: Math.max(0, top),
         width: Math.max(...xs) - left,
         height: Math.max(...ys) - top,
-        ...(explicitSpace ? { spaceBefore: true } : {}),
+        ...(spaceBefore ? { spaceBefore: true } : {}),
         rotation: {
           x: origin.x,
           y: origin.y,
@@ -110,6 +108,7 @@ export function normalizeTextItemsForLayout(
           advance: width * viewportBaselineLength / baselineLength,
         },
       });
+      spaceBefore = false;
       continue;
     }
 
@@ -121,8 +120,35 @@ export function normalizeTextItemsForLayout(
       width,
       height,
       baselineY: origin.y,
-      ...(explicitSpace ? { spaceBefore: true } : {}),
+      ...(spaceBefore ? { spaceBefore: true } : {}),
     });
+    spaceBefore = false;
   }
   return normalized;
+}
+
+export function scaleTextItemForLayout(item: PdfTextItem, scaleX: number, scaleY: number): PdfTextItem {
+  const scaled = {
+    ...item,
+    x: item.x * scaleX,
+    y: item.y * scaleY,
+    width: item.width * scaleX,
+    height: item.height * scaleY,
+    baselineY: item.baselineY === undefined ? undefined : item.baselineY * scaleY,
+  };
+  const rotation = item.rotation;
+  if (!rotation) return scaled;
+  const dx = rotation.dx * scaleX;
+  const dy = rotation.dy * scaleY;
+  const stretch = Math.hypot(dx, dy);
+  return {
+    ...scaled,
+    rotation: {
+      x: rotation.x * scaleX,
+      y: rotation.y * scaleY,
+      dx: dx / stretch,
+      dy: dy / stretch,
+      advance: rotation.advance * stretch,
+    },
+  };
 }
