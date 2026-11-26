@@ -25,6 +25,32 @@ export async function deletePrefix(
 }
 
 /**
+ * Like {@link deletePrefix}, but a stop or a failed deletion is reported only
+ * after every deletion already started has settled, so the caller knows that
+ * nothing under `prefix` is still being deleted.
+ */
+export async function deletePrefixSettled(
+  storage: ArtifactStorage,
+  prefix: string,
+  shouldStop: () => boolean,
+): Promise<number> {
+  const keys = await storage.listPrefix(prefix);
+  for (let index = 0; index < keys.length; index += DELETE_BATCH) {
+    if (shouldStop()) throw new Error(`Deletion under ${prefix} was stopped`);
+    await settleAll(keys.slice(index, index + DELETE_BATCH).map((key) => storage.deleteObject(key)));
+  }
+  return keys.length;
+}
+
+/** Waits for every promise, then rejects with the first failure, if any. */
+export async function settleAll<T>(work: Promise<T>[]): Promise<T[]> {
+  const results = await Promise.allSettled(work);
+  const failed = results.find((result): result is PromiseRejectedResult => result.status === 'rejected');
+  if (failed) throw failed.reason;
+  return results.map((result) => (result as PromiseFulfilledResult<T>).value);
+}
+
+/**
  * List export artifact directory prefixes under `exportRoot` whose metadata
  * sidecar matches `ownsMetadata`. Metadata reads are batched; unreadable
  * metadata is skipped rather than failing the cleanup.

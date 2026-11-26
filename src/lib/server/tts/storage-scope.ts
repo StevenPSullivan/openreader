@@ -42,6 +42,17 @@ export async function resolveDocumentStorageScope(
 }
 
 /**
+ * The identity of the layout published now, for a scope resolved earlier in
+ * the request. PDF reclaim calls this once it holds the audiobook lock.
+ */
+export async function refreshStorageIdentity(resolved: DocumentStorageScope): Promise<DocumentStorageScope> {
+  if (resolved.scope.readerType !== 'pdf') return resolved;
+  const narrationRevision = await resolvePdfNarrationRevision(resolved.documentId, resolved.scope);
+  const { settingsHash } = await buildTtsPlaybackPlanningInput(resolved.parsed, resolved.scope, { narrationRevision });
+  return { ...resolved, settingsHash, narrationRevision };
+}
+
+/**
  * Other cache identities of this version that are still in use after a Force
  * reparse: audio made with the current settings on an earlier PDF layout,
  * which an export or a live audiobook request was built from. An identity is

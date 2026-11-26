@@ -1,6 +1,12 @@
 import type { ArtifactStorage } from '../infrastructure/storage';
 import { ttsPlaybackExportArtifactScopePrefix } from '../storage/artifact-addressing';
-import { deletePrefix, findExportArtifactPrefixesByMetadata, storageUserHash } from '../storage/prefix-cleanup';
+import {
+  deletePrefix,
+  deletePrefixSettled,
+  findExportArtifactPrefixesByMetadata,
+  settleAll,
+  storageUserHash,
+} from '../storage/prefix-cleanup';
 import type { TtsPlaybackResetScope } from './storage';
 
 export type TtsPlaybackCacheClearScope = TtsPlaybackResetScope & {
@@ -23,6 +29,10 @@ export async function clearTtsPlaybackArtifacts(input: {
   shouldStop?: () => boolean;
 }): Promise<TtsPlaybackCacheClearResult> {
   const { storage, s3Prefix, scope, shouldStop } = input;
+  // A deadline-bounded clear (PDF reclaim) reports a stop or failure only
+  // after every deletion it started has settled, including parallel ones.
+  const remove = (prefix: string) => (shouldStop ? deletePrefixSettled(storage, prefix, shouldStop) : deletePrefix(storage, prefix));
+  const all = <T>(work: Promise<T>[]) => (shouldStop ? settleAll(work) : Promise.all(work));
   const version = typeof scope.documentVersion === 'number' && Number.isFinite(scope.documentVersion)
     ? Math.max(0, Math.floor(scope.documentVersion))
     : null;
@@ -45,10 +55,10 @@ export async function clearTtsPlaybackArtifacts(input: {
         ? `${s3Prefix}/tts_playback_plan_v1/${scope.documentId}/${version}/${scope.readerType}/`
         : `${s3Prefix}/tts_playback_plan_v1/${scope.documentId}/${version}/`;
 
-  const [deletedAudioObjects, deletedSidecarObjects, deletedPlanObjects] = await Promise.all([
-    deletePrefix(storage, audioPrefix, shouldStop),
-    deletePrefix(storage, sidecarPrefix, shouldStop),
-    planPrefix === null ? 0 : deletePrefix(storage, planPrefix, shouldStop),
+  const [deletedAudioObjects, deletedSidecarObjects, deletedPlanObjects] = await all([
+    remove(audioPrefix),
+    remove(sidecarPrefix),
+    planPrefix === null ? Promise.resolve(0) : remove(planPrefix),
   ]);
 
   // Export artifacts are user/document-scoped, so the whole scope prefix can
@@ -60,7 +70,7 @@ export async function clearTtsPlaybackArtifacts(input: {
   });
   let deletedExportObjects: number;
   if (version === null) {
-    deletedExportObjects = await deletePrefix(storage, exportScopePrefix, shouldStop);
+    deletedExportObjects = await remove(exportScopePrefix);
   } else {
     const exportPrefixes = await findExportArtifactPrefixesByMetadata({
       storage,
@@ -68,9 +78,7 @@ export async function clearTtsPlaybackArtifacts(input: {
       ownsMetadata: (metadata) => Number(metadata.documentVersion) === version
         && (settingsHash === null || metadata.settingsHash === settingsHash),
     });
-    deletedExportObjects = (await Promise.all(
-      exportPrefixes.map((prefix) => deletePrefix(storage, prefix, shouldStop)),
-    )).reduce((total, count) => total + count, 0);
+    deletedExportObjects = (await all(exportPrefixes.map(remove))).reduce((total, count) => total + count, 0);
   }
 
   return { deletedAudioObjects, deletedSidecarObjects, deletedPlanObjects, deletedExportObjects };

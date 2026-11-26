@@ -46,7 +46,64 @@ class MemoryStorage implements ArtifactStorage {
   }
 }
 
+/** Audio deletes fast; sidecar deletes are slow, so they are still running when audio stops or fails. */
+async function parallelDeletions(storage: MemoryStorage, prefix: string, documentId: string, audioCount: number) {
+  const userHash = createHash('sha256').update('user-1').digest('hex');
+  const audio = `${prefix}/tts_playback_segments_audio_v1/users/user-1/docs/${documentId}/3/old/`;
+  const sidecars = `${prefix}/tts_playback_segments_v1/users/${userHash}/docs/${documentId}/3/old/segments/`;
+  for (let index = 0; index < audioCount; index += 1) await storage.putObject(`${audio}${String(index).padStart(3, '0')}.mp3`, Buffer.from('a'));
+  for (let index = 0; index < 32; index += 1) await storage.putObject(`${sidecars}${index}.json`, Buffer.from('{}'));
+  const state = { inFlight: 0, audioBatchesDone: 0 };
+  const deleteObject = storage.deleteObject.bind(storage);
+  return { audio, sidecars, state, wrap: (failAudio = false) => {
+    storage.deleteObject = async (key: string) => {
+      state.inFlight += 1;
+      try {
+        const isAudio = key.startsWith(audio);
+        await new Promise((resolve) => setTimeout(resolve, isAudio ? 1 : 40));
+        if (isAudio && failAudio) throw new Error('S3 delete failed');
+        await deleteObject(key);
+      } finally {
+        state.inFlight -= 1;
+      }
+    };
+  } };
+}
+
 describe('playback cache clear', () => {
+  test('a deadline-bounded clear reports a stop only after a parallel deletion has settled', async () => {
+    const storage = new MemoryStorage();
+    const prefix = 'openreader-test';
+    const documentId = 'c'.repeat(64);
+    const setup = await parallelDeletions(storage, prefix, documentId, 40);
+    setup.wrap();
+    let checks = 0;
+    // The deadline passes after the first audio batch, while sidecars are still being deleted.
+    const shouldStop = () => (checks += 1) > 2;
+    const cleared = clearTtsPlaybackArtifacts({
+      storage, s3Prefix: prefix, shouldStop,
+      scope: { storageUserId: 'user-1', documentId, documentVersion: 3, settingsHash: 'old', namespace: null },
+    });
+    await expect(cleared).rejects.toThrow('stopped');
+    expect(setup.state.inFlight).toBe(0);
+    expect([...storage.objects.keys()].filter((key) => key.startsWith(setup.sidecars))).toHaveLength(0);
+  });
+
+  test('a deadline-bounded clear reports a failed deletion only after every deletion it started has settled', async () => {
+    const storage = new MemoryStorage();
+    const prefix = 'openreader-test';
+    const documentId = 'd'.repeat(64);
+    const setup = await parallelDeletions(storage, prefix, documentId, 8);
+    setup.wrap(true);
+    const cleared = clearTtsPlaybackArtifacts({
+      storage, s3Prefix: prefix, shouldStop: () => false,
+      scope: { storageUserId: 'user-1', documentId, documentVersion: 3, settingsHash: 'old', namespace: null },
+    });
+    await expect(cleared).rejects.toThrow('S3 delete failed');
+    expect(setup.state.inFlight).toBe(0);
+    expect([...storage.objects.keys()].filter((key) => key.startsWith(setup.sidecars))).toHaveLength(0);
+  });
+
   test('a stopped clear finishes the batch in flight and starts no other', async () => {
     const storage = new MemoryStorage();
     const prefix = 'openreader-test';

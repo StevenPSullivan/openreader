@@ -1,8 +1,13 @@
-import { NextRequest, NextResponse } from 'next/server';
+import { after, NextRequest, NextResponse } from 'next/server';
 import { getComputeWorkerClient, isComputeWorkerAvailable } from '@/lib/server/compute-worker/client';
 import { createRequestLogger } from '@/lib/server/logger';
 import { errorResponse } from '@/lib/server/errors/next-response';
-import { pinnedSettingsHashes, resolveDocumentStorageScope } from '@/lib/server/tts/storage-scope';
+import {
+  pinnedSettingsHashes,
+  refreshStorageIdentity,
+  resolveDocumentStorageScope,
+  type DocumentStorageScope,
+} from '@/lib/server/tts/storage-scope';
 import { withDocumentAudiobookLock } from '@/lib/server/audiobooks/audiobooks';
 import { ApiRequestError } from '@/lib/server/api/responses';
 
@@ -10,10 +15,16 @@ export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 export const maxDuration = 60;
 
-// Deletions stop by this point; the worker then answers within the timeout,
-// which leaves the route time to respond before `maxDuration`.
+// PDF reclaim: the worker starts no deletion this long after the lock is taken,
+// and answers once every deletion it started has settled.
 const RECLAIM_DELETE_WINDOW_MS = 35_000;
-const RECLAIM_WORKER_TIMEOUT_MS = 55_000;
+// The browser gets an answer by now, even if the worker has not answered yet.
+const RECLAIM_RESPONSE_DEADLINE_MS = 50_000;
+// Upper bound for a worker that never answers. Past its deadline it starts no
+// deletion, so only a single hung deletion batch could reach this.
+const RECLAIM_WORKER_CEILING_MS = 10 * 60_000;
+
+type ComputeWorkerClient = ReturnType<typeof getComputeWorkerClient>;
 
 /**
  * Reclaim a document's audio generated with other settings or older document
@@ -29,50 +40,35 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Compute worker is required to reclaim audio.' }, { status: 503 });
     }
     const client = getComputeWorkerClient();
-    // The worker starts no deletion after `notAfter` and answers once any batch
-    // in flight is done, well before the request is abandoned.
-    const notAfter = Date.now() + RECLAIM_DELETE_WINDOW_MS;
-    const signal = AbortSignal.timeout(RECLAIM_WORKER_TIMEOUT_MS);
-    // A PDF that a reparse changed can have audiobooks on an earlier layout.
-    const pinsEarlierLayouts = resolved.scope.readerType === 'pdf' && resolved.narrationRevision !== null;
-    const reclaim = async () => {
-      // Keep exactly what the storage screen reports as current.
-      let pinned: string[] | null = [];
-      if (pinsEarlierLayouts) {
-        const report = await client.getUserStorageUsage({
-          storageUserId: resolved.scope.storageUserId,
-          includePlayback: true,
-          documentId: resolved.documentId,
-          derivedDocumentIds: [],
-          namespace: null,
-        }, { signal });
-        pinned = await pinnedSettingsHashes(resolved, {
-          exportsComplete: report.exportsComplete,
-          exports: report.documents.find((row) => row.documentId === resolved.documentId)?.exports ?? [],
-        });
-      }
-      return client.reclaimTtsPlaybackCache({
+    if (resolved.scope.readerType !== 'pdf') {
+      const result = await client.reclaimTtsPlaybackCache({
         storageUserId: resolved.scope.storageUserId,
         documentId: resolved.documentId,
-        // Without a complete report, every variant of this version is kept.
-        keep: pinned === null
-          ? { documentVersion: resolved.scope.documentVersion }
-          : {
-            documentVersion: resolved.scope.documentVersion,
-            settingsHash: resolved.settingsHash,
-            ...(pinned.length ? { settingsHashes: pinned } : {}),
-          },
-        notAfter,
-      }, { signal });
-    };
+        keep: {
+          documentVersion: resolved.scope.documentVersion,
+          settingsHash: resolved.settingsHash,
+        },
+      }, { signal: AbortSignal.timeout(45_000) });
+      return NextResponse.json(result);
+    }
+
     // No audiobook may start between choosing what to keep and the worker's
     // last deletion, or its new file could be deleted under an earlier
-    // layout's hash. Every PDF takes the lock, because a reparse can publish
-    // a revision while reclaim runs.
-    const result = resolved.scope.readerType === 'pdf'
-      ? await withDocumentAudiobookLock(resolved.scope, resolved.documentId, reclaim)
-      : await reclaim();
-    return NextResponse.json(result);
+    // layout's hash. The lock is released only once the worker has answered,
+    // even if this response has to be sent first.
+    const work = withDocumentAudiobookLock(resolved.scope, resolved.documentId, () => reclaimPdf(client, resolved));
+    const answered = await withinDeadline(work, RECLAIM_RESPONSE_DEADLINE_MS);
+    if (!answered) {
+      after(() => work.then(() => undefined, (error: unknown) => {
+        logger.warn({ event: 'tts.storage.document_reclaim_late_failure', error: String(error) },
+          'Reclaim failed after its response');
+      }));
+      return NextResponse.json({
+        error: 'Reclaiming unused audio is still finishing. Check storage again shortly.',
+        code: 'TTS_STORAGE_RECLAIM_PENDING',
+      }, { status: 503, headers: { 'Retry-After': '10' } });
+    }
+    return NextResponse.json(answered.result);
   } catch (error) {
     if (error instanceof ApiRequestError) {
       return NextResponse.json({ error: error.message, code: error.code }, {
@@ -87,5 +83,53 @@ export async function POST(request: NextRequest) {
       apiErrorMessage: 'Failed to reclaim unused audio',
       normalize: { code: 'TTS_STORAGE_RECLAIM_FAILED', errorClass: 'storage' },
     });
+  }
+}
+
+/** Runs with the document's audiobook lock held. */
+async function reclaimPdf(client: ComputeWorkerClient, requested: DocumentStorageScope) {
+  // Read the published layout now that no audiobook can start.
+  const resolved = await refreshStorageIdentity(requested);
+  const notAfter = Date.now() + RECLAIM_DELETE_WINDOW_MS;
+  const signal = AbortSignal.timeout(RECLAIM_WORKER_CEILING_MS);
+  // Keep exactly what the storage screen reports as current. Only a layout a
+  // reparse changed can have audiobooks on an earlier layout.
+  let pinned: string[] | null = [];
+  if (resolved.narrationRevision !== null) {
+    const report = await client.getUserStorageUsage({
+      storageUserId: resolved.scope.storageUserId,
+      includePlayback: true,
+      documentId: resolved.documentId,
+      derivedDocumentIds: [],
+      namespace: null,
+    }, { signal });
+    pinned = await pinnedSettingsHashes(resolved, {
+      exportsComplete: report.exportsComplete,
+      exports: report.documents.find((row) => row.documentId === resolved.documentId)?.exports ?? [],
+    });
+  }
+  return client.reclaimTtsPlaybackCache({
+    storageUserId: resolved.scope.storageUserId,
+    documentId: resolved.documentId,
+    // Without a complete report, every variant of this version is kept.
+    keep: pinned === null
+      ? { documentVersion: resolved.scope.documentVersion }
+      : {
+        documentVersion: resolved.scope.documentVersion,
+        settingsHash: resolved.settingsHash,
+        ...(pinned.length ? { settingsHashes: pinned } : {}),
+      },
+    notAfter,
+  }, { signal });
+}
+
+/** The work's result if it settles within `ms`; its failure is rethrown. */
+async function withinDeadline<T>(work: Promise<T>, ms: number): Promise<{ result: T } | null> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const deadline = new Promise<null>((resolve) => { timer = setTimeout(() => resolve(null), ms); });
+  try {
+    return await Promise.race([work.then((result) => ({ result })), deadline]);
+  } finally {
+    clearTimeout(timer);
   }
 }

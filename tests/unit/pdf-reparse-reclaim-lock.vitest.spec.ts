@@ -3,12 +3,21 @@ import { beforeEach, describe, expect, test, vi } from 'vitest';
 
 const mocks = vi.hoisted(() => ({
   resolved: { value: null as Record<string, unknown> | null },
+  published: { value: null as Record<string, unknown> | null },
+  refresh: vi.fn(),
   reclaim: vi.fn(),
   usage: vi.fn(),
+  after: [] as Promise<unknown>[],
 }));
 
+vi.mock('next/server', async (original) => ({
+  ...await original<typeof import('next/server')>(),
+  after: (task: () => Promise<unknown>) => { mocks.after.push(task()); },
+}));
 vi.mock('@/lib/server/tts/storage-scope', () => ({
   resolveDocumentStorageScope: async () => mocks.resolved.value,
+  // The identity of the layout published when it is read.
+  refreshStorageIdentity: mocks.refresh,
   pinnedSettingsHashes: async () => [],
 }));
 vi.mock('@/lib/server/compute-worker/client', () => ({
@@ -32,6 +41,9 @@ const post = () => reclaimRoute(new NextRequest('http://localhost/api/tts/storag
 
 beforeEach(() => {
   vi.clearAllMocks();
+  mocks.after.length = 0;
+  mocks.published.value = null;
+  mocks.refresh.mockImplementation(async (resolved: Record<string, unknown>) => ({ ...resolved, ...(mocks.published.value ?? {}) }));
   mocks.usage.mockResolvedValue({ documents: [], scannedObjects: 0, truncated: false, exportsComplete: true });
 });
 
@@ -76,6 +88,56 @@ describe('reclaim and audiobook publishing', () => {
     // The worker call itself outlasts the deletion window, so the lock is held
     // until the worker has answered.
     expect(options.signal.aborted).toBe(false);
+  });
+
+  test('reclaim decides what to keep from the layout published once it holds the lock', async () => {
+    mocks.resolved.value = { documentId: DOCUMENT_ID, scope, settingsHash: 'unrevisioned', parsed: {}, narrationRevision: null };
+    mocks.reclaim.mockResolvedValue(done);
+    // An audiobook command holds the lock while the first changed reparse publishes.
+    let releasePublisher!: () => void;
+    const publisher = withDocumentAudiobookLock(scope as never, DOCUMENT_ID, () => new Promise<void>((resolve) => { releasePublisher = resolve; }));
+    const response = post();
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(mocks.refresh).not.toHaveBeenCalled();
+    mocks.published.value = { settingsHash: 'revisioned', narrationRevision: 'c'.repeat(32) };
+    releasePublisher();
+    await publisher;
+    expect((await response).status).toBe(200);
+    expect(mocks.refresh).toHaveBeenCalledOnce();
+    expect(mocks.reclaim.mock.calls[0]![0].keep).toMatchObject({ settingsHash: 'revisioned' });
+    expect(mocks.usage).toHaveBeenCalledOnce();
+  });
+
+  test('when the app answers first, audiobooks still wait for every started deletion', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    try {
+      mocks.resolved.value = { documentId: DOCUMENT_ID, scope, settingsHash: 'current', parsed: {}, narrationRevision: 'c'.repeat(32) };
+      // The worker is still finishing a deletion batch it started, and it
+      // would stop answering if its request were aborted.
+      let finishWorker!: () => void;
+      let workerDeleting = true;
+      mocks.reclaim.mockImplementation((_request: unknown, options: { signal: AbortSignal }) => new Promise((resolve, reject) => {
+        options.signal.addEventListener('abort', () => reject(options.signal.reason));
+        finishWorker = () => { workerDeleting = false; resolve(done); };
+      }));
+      const response = post();
+      await vi.waitFor(() => expect(mocks.reclaim).toHaveBeenCalledOnce());
+      let publishedWhileDeleting: boolean | undefined;
+      const publish = withDocumentAudiobookLock(scope as never, DOCUMENT_ID, async () => { publishedWhileDeleting = workerDeleting; });
+
+      await vi.advanceTimersByTimeAsync(56_000);
+      const answer = await response;
+      expect(answer.status).toBe(503);
+      expect((await answer.json()).code).toBe('TTS_STORAGE_RECLAIM_PENDING');
+      expect(publishedWhileDeleting).toBeUndefined();
+
+      finishWorker();
+      await publish;
+      await Promise.all(mocks.after);
+      expect(publishedWhileDeleting).toBe(false);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   test('other readers reclaim without the audiobook lock', async () => {

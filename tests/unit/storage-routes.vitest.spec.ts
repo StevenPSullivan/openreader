@@ -46,6 +46,7 @@ vi.mock('@/lib/server/tts/storage-scope', () => ({
     };
   },
   pinnedSettingsHashes: mocks.pinned,
+  refreshStorageIdentity: async (resolved: unknown) => resolved,
   listOwnedDocumentIds: async () => new Set(mocks.owned),
   filterOwnedDocumentIds: async (_userId: string, ids: string[]) => new Set(ids.filter((id) => mocks.owned.has(id))),
 }));
