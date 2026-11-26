@@ -1,14 +1,12 @@
 {
-  "revision": "34a2a35c5193cd816906055bfca2e31e3d31bd3a",
-  "project": "openreader",
+  "revision": "37f29b421a85050577b8bf310afd1c0c122ecd80",
+  "project": "compute-worker",
   "tests": [
-    "tests/unit/pdf-reparse-playback-identity.vitest.spec.ts",
-    "tests/unit/storage-routes.vitest.spec.ts",
-    "tests/unit/audiobooks-routes.vitest.spec.ts",
-    "tests/unit/reader-bootstrap-language.vitest.spec.ts",
-    "tests/unit/reader-playback-preparation.vitest.spec.ts",
-    "tests/unit/tts-playback-request.vitest.spec.ts",
-    "tests/unit/tts-segments.vitest.spec.ts",
-    "tests/unit/cached-voices.vitest.spec.ts"
+    "packages/compute-worker/tests/unit/pdf-reparse-narration-revision.test.ts",
+    "packages/compute-worker/tests/unit/storage-usage.test.ts",
+    "packages/compute-worker/tests/unit/tts-playback-derivation.test.ts",
+    "packages/compute-worker/tests/unit/pdf-layout-resume.test.ts",
+    "packages/compute-worker/tests/unit/pdf-artifact-persistence.test.ts",
+    "packages/compute-worker/tests/unit/playback-job-cache-discovery.test.ts"
   ]
 }
