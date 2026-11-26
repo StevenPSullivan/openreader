@@ -27,6 +27,7 @@ export async function POST(request: NextRequest) {
       keep: {
         documentVersion: resolved.scope.documentVersion,
         settingsHash: resolved.settingsHash,
+        ...(resolved.pinnedSettingsHashes.length ? { settingsHashes: resolved.pinnedSettingsHashes } : {}),
       },
     }, { signal: AbortSignal.timeout(45_000) });
     return NextResponse.json(result);

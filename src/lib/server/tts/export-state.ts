@@ -44,6 +44,9 @@ function isInflight(status: string | null | undefined): boolean {
 export function exportOperationIssue(operation: ComputeOperation | null | undefined): TtsExportIssue | null {
   if (operation?.status !== 'failed') return null;
   const error = operation.error as { message?: unknown; code?: unknown } | null | undefined;
+  if (error?.code === 'PDF_LAYOUT_CHANGED') {
+    return { code: error.code, message: 'This PDF was reparsed after the audiobook was requested. Request the audiobook again.' };
+  }
   return {
     code: typeof error?.code === 'string' ? error.code : null,
     message: typeof error?.message === 'string' ? error.message : null,

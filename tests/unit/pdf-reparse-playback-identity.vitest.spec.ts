@@ -6,6 +6,8 @@ const mocks = vi.hoisted(() => ({
   variants: vi.fn(),
   saved: vi.fn(),
   defaultRequest: vi.fn(),
+  pinnedRevisions: vi.fn(),
+  scope: vi.fn(),
 }));
 
 vi.mock('@/lib/server/pdf-parse/operation', () => ({ resolveCurrentPdfParse: mocks.resolveLayout }));
@@ -20,9 +22,13 @@ vi.mock('@/lib/server/compute-worker/client', () => ({
 vi.mock('@/lib/server/audiobooks/request', () => ({ loadSavedPlayback: mocks.saved }));
 vi.mock('@/lib/server/reader/playback', () => ({ resolveDefaultPlaybackRequest: mocks.defaultRequest }));
 vi.mock('@/lib/server/tts/cloned-voices', () => ({ listClonedVoices: async () => [] }));
+vi.mock('@/lib/server/audiobooks/audiobooks', () => ({ audiobookNarrationRevisions: mocks.pinnedRevisions }));
+vi.mock('@/lib/server/tts/segments-auth', () => ({ resolveSegmentDocumentScope: mocks.scope }));
 
 import { buildTtsPlaybackPlanningInput, type ParsedTtsPlaybackRequestBody } from '@/lib/server/tts/playback-request';
+import { NextRequest } from 'next/server';
 import { listCachedVoices } from '@/lib/server/tts/cached-voices';
+import { resolveDocumentStorageScope } from '@/lib/server/tts/storage-scope';
 import type { ResolvedSegmentDocumentScope } from '@/lib/server/tts/segments-auth';
 
 const DOCUMENT_ID = 'a'.repeat(64);
@@ -97,6 +103,30 @@ describe('PDF playback identity after Force reparse', () => {
     const foreign = `openreader/tts_playback_plan_v1/${'b'.repeat(64)}/7/pdf/${'2'.repeat(32)}.json`;
     expect(await buildTtsPlaybackPlanningInput(request({ planObjectKey: foreign }), scope)).toEqual(reparsed);
     expect(mocks.readPlan).not.toHaveBeenCalledWith(foreign);
+  });
+
+  test('storage keeps audio for the current settings on each layout a live audiobook is pinned to', async () => {
+    const legacy = await buildTtsPlaybackPlanningInput(request(), scope);
+    currentLayout(REVISION);
+    const reparsed = await buildTtsPlaybackPlanningInput(request(), scope);
+    const older = await buildTtsPlaybackPlanningInput(request(), scope, { narrationRevision: 'e'.repeat(32) });
+    mocks.scope.mockResolvedValue(scope);
+    const body = { ...request(), planning: { skipBlockKinds: ['header', 'footer'] } };
+    const resolve = () => resolveDocumentStorageScope(new NextRequest('http://localhost/api/tts/storage/document', {
+      method: 'POST', body: JSON.stringify(body),
+    }));
+
+    mocks.pinnedRevisions.mockResolvedValue([null, REVISION, 'e'.repeat(32)]);
+    expect(await resolve()).toMatchObject({
+      settingsHash: reparsed.settingsHash,
+      pinnedSettingsHashes: [legacy.settingsHash, older.settingsHash],
+    });
+    mocks.pinnedRevisions.mockResolvedValue([REVISION]);
+    expect(await resolve()).toMatchObject({ settingsHash: reparsed.settingsHash, pinnedSettingsHashes: [] });
+    mocks.pinnedRevisions.mockClear();
+    mocks.scope.mockResolvedValue({ ...scope, readerType: 'epub' });
+    expect(await resolve()).toMatchObject({ pinnedSettingsHashes: [] });
+    expect(mocks.pinnedRevisions).not.toHaveBeenCalled();
   });
 
   test('other readers never look up a PDF layout', async () => {

@@ -231,10 +231,13 @@ export const ttsPlaybackCacheReclaimSchema = z.object({
   /**
    * The cache variant to keep. Omit `settingsHash` to keep every variant of
    * that version; pass null to reclaim every variant of the document.
+   * `settingsHashes` keeps more variants of that version alongside
+   * `settingsHash`, such as audio for pinned exports of an earlier layout.
    */
   keep: z.object({
     documentVersion: z.number().int().nonnegative(),
     settingsHash: z.string().trim().min(1).max(256).optional(),
+    settingsHashes: z.array(z.string().trim().min(1).max(256)).max(64).optional(),
   }).strict().nullable(),
 }).strict();
 

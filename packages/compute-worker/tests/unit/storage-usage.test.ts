@@ -180,6 +180,14 @@ describe('storage usage', () => {
     expect(reclaimableVariants(usage, { documentVersion: 3 })).toEqual([
       { documentVersion: 2, settingsHash: 'current' },
     ]);
+    // Pinned exports of an earlier PDF layout stay; other voices and versions still go.
+    expect(reclaimableVariants(usage, { documentVersion: 3, settingsHash: 'current', settingsHashes: ['othervoice'] })).toEqual([
+      { documentVersion: 2, settingsHash: 'current' },
+    ]);
+    expect(reclaimableVariants(usage, { documentVersion: 2, settingsHash: 'current', settingsHashes: ['othervoice'] })).toEqual([
+      { documentVersion: 3, settingsHash: 'current' },
+      { documentVersion: 3, settingsHash: 'othervoice' },
+    ]);
     expect(reclaimableVariants(usage, null)).toHaveLength(3);
     expect(reclaimableVariants(undefined, null)).toEqual([]);
   });

@@ -30,6 +30,7 @@ export async function POST(request: NextRequest) {
       documentId: resolved.documentId,
       documentVersion: resolved.scope.documentVersion,
       settingsHash: resolved.settingsHash,
+      settingsHashes: resolved.pinnedSettingsHashes,
     }));
   } catch (error) {
     if (isComputeWorkerEndpointMissingError(error)) {

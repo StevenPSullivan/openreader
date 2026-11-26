@@ -1178,6 +1178,7 @@ export interface paths {
                         keep: {
                             documentVersion: number;
                             settingsHash?: string;
+                            settingsHashes?: string[];
                         } | null;
                     };
                 };

@@ -23,6 +23,7 @@ import {
 } from '../../storage/artifact-addressing';
 import type { ArtifactStorage } from '../../infrastructure/storage';
 import type { TtsPlaybackPlanCapableRequest } from './schemas';
+import { PdfLayoutChangedError } from './layout-changed';
 
 export type TtsPlaybackSegmentInput = {
   ordinal: number;
@@ -157,7 +158,7 @@ async function derivePdfSourceUnits(
   // A plan is keyed by the narration revision it was requested for. Planning a
   // replaced layout under that key would pair its blocks with another layout.
   if ((parsed.narrationRevision ?? null) !== (documentSource.narrationRevision ?? null)) {
-    throw new Error('The PDF layout changed while its reading plan was being prepared. Reopen the document.');
+    throw new PdfLayoutChangedError();
   }
   const pages = [...(parsed.pages ?? [])].sort((a, b) => a.pageNumber - b.pageNumber);
   const units: CanonicalTtsSourceUnit[] = [];
@@ -329,9 +330,7 @@ export async function resolveAndPersistTtsPlaybackPlan(input: {
   if (!plannedSegments || plannedSegments.length === 0) {
     // A saved plan that is gone is planned again only under its own key. Another
     // request's key may name a different layout revision.
-    if (planObjectKey !== computedPlanObjectKey) {
-      throw new Error('The reading plan is no longer available. Reopen the document.');
-    }
+    if (planObjectKey !== computedPlanObjectKey) throw new PdfLayoutChangedError();
     plannedSegments = planTtsPlaybackSegments(
       input.request,
       await resolvePlaybackSourceUnits(input.request, input.storage, input.s3Prefix),

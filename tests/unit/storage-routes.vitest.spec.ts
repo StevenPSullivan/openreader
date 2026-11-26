@@ -9,6 +9,7 @@ const mocks = vi.hoisted(() => ({
   owned: new Set<string>(),
   workerAvailable: true,
   authorized: true,
+  pinned: [] as string[],
 }));
 
 vi.mock('@/lib/server/admin/settings', () => ({ getRuntimeConfig: async () => ({}) }));
@@ -39,6 +40,7 @@ vi.mock('@/lib/server/tts/storage-scope', () => ({
       documentId: body.documentId,
       scope: { storageUserId: 'user-1', documentVersion: 3, readerType: 'pdf' },
       settingsHash: 'current-hash',
+      pinnedSettingsHashes: mocks.pinned,
     };
   },
   listOwnedDocumentIds: async () => new Set(mocks.owned),
@@ -73,6 +75,7 @@ describe('storage routes', () => {
     mocks.workerAvailable = true;
     mocks.authorized = true;
     mocks.reclaim.mockResolvedValue(reclaimResult);
+    mocks.pinned = [];
   });
 
   test('measures one document against the current cache identity', async () => {
@@ -138,6 +141,31 @@ describe('storage routes', () => {
       storageUserId: 'user-1',
       documentId: 'doc-1',
       keep: { documentVersion: 3, settingsHash: 'current-hash' },
+    }, expect.anything());
+  });
+
+  test('keeps and reports audio pinned to an earlier PDF layout the same way', async () => {
+    mocks.pinned = ['pinned-hash'];
+    mocks.usage.mockResolvedValueOnce({
+      documents: [{
+        documentId: 'doc-1',
+        variants: [variant(3, 'current-hash', 120), variant(3, 'pinned-hash', 70), variant(3, 'old-voice', 80), variant(2, 'pinned-hash', 30)],
+        exports: [{ documentVersion: 3, settingsHash: 'pinned-hash', bytes: 400, objects: 2 }],
+        derivedBytes: 50,
+        derivedObjects: 2,
+      }],
+      scannedObjects: 8,
+      truncated: false,
+    });
+    const usage = await documentUsage(post('/api/tts/storage/document', { documentId: 'doc-1' }));
+    expect(await usage.json()).toEqual({
+      currentAudioBytes: 120 + 70 + 400, unusedAudioBytes: 80 + 30, documentDataBytes: 50, truncated: false,
+    });
+    await documentReclaim(post('/api/tts/storage/document/reclaim', { documentId: 'doc-1' }));
+    expect(mocks.reclaim).toHaveBeenCalledWith({
+      storageUserId: 'user-1',
+      documentId: 'doc-1',
+      keep: { documentVersion: 3, settingsHash: 'current-hash', settingsHashes: ['pinned-hash'] },
     }, expect.anything());
   });
 

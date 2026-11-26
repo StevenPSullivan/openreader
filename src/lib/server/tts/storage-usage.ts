@@ -16,18 +16,19 @@ export type DocumentStorageSummary = {
 /**
  * Split one document's playback storage by cache identity. Audio is current
  * only when it matches both the document version and the settings hash the
- * reader would request now. Exports whose metadata could not be read are
+ * reader would request now, or one of `settingsHashes` that reclaim also keeps. Exports whose metadata could not be read are
  * reported as current because reclaim cannot attribute (and so never deletes)
  * them.
  */
 export function summarizeDocumentStorage(
   report: UserStorageUsageReport,
-  current: { documentId: string; documentVersion: number; settingsHash: string },
+  current: { documentId: string; documentVersion: number; settingsHash: string; settingsHashes?: readonly string[] },
 ): DocumentStorageSummary {
   const document = report.documents.find((row) => row.documentId === current.documentId);
   const isCurrent = (documentVersion: number | null, settingsHash: string | null) => (
     documentVersion === null || settingsHash === null
-    || (documentVersion === current.documentVersion && settingsHash === current.settingsHash)
+    || (documentVersion === current.documentVersion
+      && (settingsHash === current.settingsHash || Boolean(current.settingsHashes?.includes(settingsHash))))
   );
   let currentAudioBytes = 0;
   let unusedAudioBytes = 0;

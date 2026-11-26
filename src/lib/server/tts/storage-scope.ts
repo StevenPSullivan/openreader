@@ -5,12 +5,18 @@ import { db } from '@openreader/database';
 import { documents } from '@openreader/database/schema';
 import { buildTtsPlaybackPlanningInput, parseTtsPlaybackRequestBody } from '@/lib/server/tts/playback-request';
 import { resolveSegmentDocumentScope, type ResolvedSegmentDocumentScope } from '@/lib/server/tts/segments-auth';
+import { audiobookNarrationRevisions } from '@/lib/server/audiobooks/audiobooks';
 
 export type DocumentStorageScope = {
   documentId: string;
   scope: ResolvedSegmentDocumentScope;
   /** The cache identity the reader would request now for this document. */
   settingsHash: string;
+  /**
+   * Other identities of this version still in use: today's settings on the
+   * earlier PDF layouts that audiobook requests are pinned to.
+   */
+  pinnedSettingsHashes: string[];
 };
 
 /**
@@ -26,7 +32,16 @@ export async function resolveDocumentStorageScope(
   const scope = await resolveSegmentDocumentScope(request, parsed.documentId);
   if (scope instanceof Response) return scope;
   const { settingsHash } = await buildTtsPlaybackPlanningInput(parsed, scope);
-  return { documentId: parsed.documentId, scope, settingsHash };
+  const pinnedSettingsHashes: string[] = [];
+  if (scope.readerType === 'pdf') {
+    for (const narrationRevision of await audiobookNarrationRevisions(scope, parsed.documentId)) {
+      const pinned = await buildTtsPlaybackPlanningInput(parsed, scope, { narrationRevision });
+      if (pinned.settingsHash !== settingsHash && !pinnedSettingsHashes.includes(pinned.settingsHash)) {
+        pinnedSettingsHashes.push(pinned.settingsHash);
+      }
+    }
+  }
+  return { documentId: parsed.documentId, scope, settingsHash, pinnedSettingsHashes };
 }
 
 export async function listOwnedDocumentIds(userId: string): Promise<Set<string>> {

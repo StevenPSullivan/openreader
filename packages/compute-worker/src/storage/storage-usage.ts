@@ -204,12 +204,13 @@ export async function collectStorageUsage(input: {
  */
 export function reclaimableVariants(
   usage: DocumentStorageUsage | undefined,
-  keep: { documentVersion: number; settingsHash?: string } | null,
+  keep: { documentVersion: number; settingsHash?: string; settingsHashes?: readonly string[] } | null,
 ): Array<{ documentVersion: number; settingsHash: string }> {
   if (!usage) return [];
   const kept = (documentVersion: number, settingsHash: string) => keep !== null
     && documentVersion === keep.documentVersion
-    && (keep.settingsHash === undefined || settingsHash === keep.settingsHash);
+    && (keep.settingsHash === undefined || settingsHash === keep.settingsHash
+      || Boolean(keep.settingsHashes?.includes(settingsHash)));
   const variants = new Map<string, { documentVersion: number; settingsHash: string }>();
   const consider = (documentVersion: number | null, settingsHash: string | null) => {
     if (documentVersion === null || settingsHash === null || kept(documentVersion, settingsHash)) return;

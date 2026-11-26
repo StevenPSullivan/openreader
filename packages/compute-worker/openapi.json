@@ -7618,6 +7618,15 @@
                         "type": "string",
                         "minLength": 1,
                         "maxLength": 256
+                      },
+                      "settingsHashes": {
+                        "maxItems": 64,
+                        "type": "array",
+                        "items": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 256
+                        }
                       }
                     },
                     "required": [
