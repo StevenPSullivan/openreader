@@ -1,4 +1,4 @@
-import { GetObjectCommand, HeadObjectCommand } from '@aws-sdk/client-s3';
+import { GetObjectCommand } from '@aws-sdk/client-s3';
 import { estimateAddedPauseMs } from '@openreader/tts/voice-customization';
 import type { TTSSegmentSettings } from '@openreader/tts/types';
 import {
@@ -10,7 +10,6 @@ import { MP3_FRAME_DURATION_MS } from '@openreader/tts/audio-format';
 import { getComputeWorkerClient } from '@/lib/server/compute-worker/client';
 import type { ComputeOperation, TtsPlaybackPlanResult } from '@/lib/server/compute-worker/protocol';
 import { getS3Config, getS3InternalClient } from '@/lib/server/storage/s3';
-import { isMissingBlobError } from '@/lib/server/documents/blobstore';
 import type { TTSSegmentLocator } from '@/types/client';
 import type { TTSSentenceAlignment } from '@/types/tts';
 
@@ -79,17 +78,6 @@ export function readTtsPlaybackPlanArtifact(planObjectKey: string): Promise<TtsP
     planArtifactCache.delete(planArtifactCache.keys().next().value!);
   }
   return read;
-}
-
-/** Whether a plan is still stored, read from storage rather than this instance's cache. */
-export async function ttsPlaybackPlanArtifactExists(planObjectKey: string): Promise<boolean> {
-  try {
-    await getS3InternalClient().send(new HeadObjectCommand({ Bucket: getS3Config().bucket, Key: planObjectKey }));
-    return true;
-  } catch (error) {
-    if (isMissingBlobError(error)) return false;
-    throw error;
-  }
 }
 
 async function fetchTtsPlaybackPlanArtifact(planObjectKey: string): Promise<TtsPlaybackPlanArtifactRead> {

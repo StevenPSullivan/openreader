@@ -31,7 +31,6 @@ import {
   classifyExportGeneration,
   exportGenerationRunId,
   exportOperationIssue,
-  PDF_LAYOUT_CHANGED_ISSUE,
 } from '@/lib/server/tts/export-state';
 import {
   buildTtsPlaybackPlanningInput,
@@ -40,7 +39,6 @@ import {
 } from '@/lib/server/tts/playback-request';
 import { TTS_PLAYBACK_SESSION_TTL_MS } from '@/lib/server/tts/playback-sessions';
 import { resolvePdfNarrationRevision } from '@/lib/server/tts/pdf-narration-revision';
-import { ttsPlaybackPlanArtifactExists } from '@/lib/server/tts/playback-plans';
 import { storageLimit } from '@/lib/server/storage/usage';
 import { resolveUserDocumentScope, type ResolvedSegmentDocumentScope } from '@/lib/server/tts/segments-auth';
 import type { Audiobook, AudiobookStatus, TtsExportArtifactState, TtsExportGenerationState, TtsExportIssue } from '@/types/tts-export';
@@ -319,10 +317,6 @@ async function advanceAudiobook(input: {
     retryAfterMs: extra.retryAfterMs ?? null,
   });
 
-  // A request whose PDF layout a reparse has replaced can't be planned again;
-  // without its original plan it can only be requested again.
-  const layoutReplaced = async () => scope.readerType === 'pdf' && intent.narrationRevision !== undefined
-    && intent.narrationRevision !== await resolvePdfNarrationRevision(documentId, scope);
   let planObjectKey = intent.parsed.planObjectKey ?? null;
   if (!planObjectKey) {
     let operation;
@@ -354,12 +348,7 @@ async function advanceAudiobook(input: {
     }
     const planResult = operation.result as TtsPlaybackPlanResult | undefined;
     if (operation.status === 'failed' || !planResult?.planObjectKey) {
-      // Whatever stopped the plan, a request whose layout was since replaced
-      // can only be requested again.
-      return reportGeneration('failed', {
-        operationId: operation.opId,
-        issue: await layoutReplaced() ? PDF_LAYOUT_CHANGED_ISSUE : exportOperationIssue(operation),
-      });
+      return reportGeneration('failed', { operationId: operation.opId, issue: exportOperationIssue(operation) });
     }
     planObjectKey = planResult.planObjectKey;
     if (command !== 'read') await db.update(audiobookRequests).set({ planObjectKey }).where(eq(audiobookRequests.id, id));
@@ -423,10 +412,6 @@ async function advanceAudiobook(input: {
     return { generation, progress, ...classified };
   };
   let current = await readGeneration(command === 'retry-skipped' || chapterIndex !== null);
-  // A saved plan that a cache clear removed is gone for good once its layout
-  // was replaced: nothing can be generated or built from it again.
-  const planGone = Boolean(intent.parsed.planObjectKey) && current.state !== 'complete' && await layoutReplaced()
-    && !await ttsPlaybackPlanArtifactExists(intent.parsed.planObjectKey!);
   const rememberGeneration = async (operationId: string | undefined) => {
     if (!operationId || operationId === generationOperationId || command === 'read' || command === 'stop') return;
     generationOperationId = operationId;
@@ -452,7 +437,7 @@ async function advanceAudiobook(input: {
 
   // Advancing resumes a run that never began or was lost to a worker restart,
   // but a stop, a failure or a usage limit waits for an explicit command.
-  const shouldStartGeneration = chapterIndex === null && !runActive && !planGone && (
+  const shouldStartGeneration = chapterIndex === null && !runActive && (
     (command === 'start' && current.state !== 'complete')
     || (command === 'retry-skipped' && (current.progress?.skippedSegments ?? 0) > 0)
     || (command === 'advance' && (current.state === 'idle'
@@ -525,7 +510,7 @@ async function advanceAudiobook(input: {
   // A whole-book run that finished after it changed the audio, so that one is new work.
   const failedBeforeLatestRun = chapterIndex === null && artifactState === 'failed'
     && (current.generation.operation?.updatedAt ?? 0) > (artifact.operation?.updatedAt ?? Number.POSITIVE_INFINITY);
-  const shouldBuild = settled && !planGone && (
+  const shouldBuild = settled && (
     ((command === 'start' || command === 'retry-skipped') && artifactState !== 'ready' && artifactState !== 'building')
     || (command === 'advance' && (artifactState === 'none' || artifactState === 'stale' || failedBeforeLatestRun))
   );
@@ -568,13 +553,11 @@ async function advanceAudiobook(input: {
   }
 
   const ready = artifactState === 'ready' ? artifact.artifact : null;
-  // A finished file stays downloadable; otherwise the request can only be made again.
-  const layoutChanged = planGone && !ready;
   return report({
     generation: {
-      state: layoutChanged ? 'failed' : current.state,
+      state: current.state,
       operationId: current.generation.operation?.opId ?? null,
-      issue: layoutChanged ? PDF_LAYOUT_CHANGED_ISSUE : current.issue,
+      issue: current.issue,
     },
     segments: current.progress ? {
       plannedSegments: current.progress.plannedSegments,
