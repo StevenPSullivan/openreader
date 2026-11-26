@@ -1,5 +1,5 @@
 {
-  "revision": "5f706ba02637d6e343d2b43ec7a84b3c8a1be4c4",
+  "revision": "34a2a35c5193cd816906055bfca2e31e3d31bd3a",
   "project": "openreader",
   "tests": [
     "tests/unit/pdf-reparse-playback-identity.vitest.spec.ts",
