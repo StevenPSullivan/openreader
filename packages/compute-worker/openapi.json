@@ -30,6 +30,9 @@
           "parsedAt": {
             "type": "number"
           },
+          "narrationRevision": {
+            "type": "string"
+          },
           "pages": {
             "type": "array",
             "items": {
@@ -1902,6 +1905,9 @@
             "type": "object",
             "properties": {
               "objectKey": {
+                "type": "string"
+              },
+              "narrationRevision": {
                 "type": "string"
               }
             },
@@ -5648,6 +5654,10 @@
                               "minLength": 1,
                               "maxLength": 64
                             }
+                          },
+                          "narrationRevision": {
+                            "type": "string",
+                            "pattern": "^[a-f0-9]{8,64}$"
                           },
                           "extent": {
                             "type": "string",
@@ -10226,6 +10236,10 @@
                               "maxLength": 64
                             }
                           },
+                          "narrationRevision": {
+                            "type": "string",
+                            "pattern": "^[a-f0-9]{8,64}$"
+                          },
                           "extent": {
                             "type": "string",
                             "enum": [
@@ -11003,6 +11017,10 @@
                               "maxLength": 64
                             }
                           },
+                          "narrationRevision": {
+                            "type": "string",
+                            "pattern": "^[a-f0-9]{8,64}$"
+                          },
                           "extent": {
                             "type": "string",
                             "enum": [
@@ -11736,6 +11754,10 @@
                               "minLength": 1,
                               "maxLength": 64
                             }
+                          },
+                          "narrationRevision": {
+                            "type": "string",
+                            "pattern": "^[a-f0-9]{8,64}$"
                           },
                           "extent": {
                             "type": "string",
@@ -18592,6 +18614,9 @@
                       "type": "object",
                       "properties": {
                         "objectKey": {
+                          "type": "string"
+                        },
+                        "narrationRevision": {
                           "type": "string"
                         }
                       },

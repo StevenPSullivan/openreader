@@ -4,6 +4,7 @@ import { loadSavedPlayback } from '@/lib/server/audiobooks/request';
 import { ComputeWorkerClient } from '@/lib/server/compute-worker/client';
 import { resolveDefaultPlaybackRequest } from '@/lib/server/reader/playback';
 import { buildTtsPlaybackPlanningInput } from '@/lib/server/tts/playback-request';
+import { resolvePdfNarrationRevision } from '@/lib/server/tts/pdf-narration-revision';
 import type { CachedVoiceResource } from '@/types/voice-api';
 import { listClonedVoices } from './cloned-voices';
 
@@ -25,6 +26,8 @@ export async function listCachedVoices(caller: AudiobookCaller, documentId: stri
   if (variants.length === 0) return [];
   const saved = await loadSavedPlayback(caller, documentId, { observeOnly: true });
   if (saved instanceof Response) return saved;
+  // Every variant is compared against today's request, which uses the current layout.
+  const narrationRevision = scope.readerType === 'pdf' ? await resolvePdfNarrationRevision(documentId, scope) : null;
   const clones = variants.some(({ settingsJson }) => String((settingsJson as CachedSettings).voice).startsWith('clone:'))
     ? await listClonedVoices(scope.userId) : [];
 
@@ -40,7 +43,7 @@ export async function listCachedVoices(caller: AudiobookCaller, documentId: stri
       modelSpeed,
     });
     if ('error' in request) continue;
-    const { settingsHash } = await buildTtsPlaybackPlanningInput(request, scope);
+    const { settingsHash } = await buildTtsPlaybackPlanningInput(request, scope, { narrationRevision });
     if (settingsHash !== variant.settingsHash) continue;
     const voice = cached.voice;
     voices.push({

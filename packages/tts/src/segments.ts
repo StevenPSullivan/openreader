@@ -63,6 +63,11 @@ export interface SegmentationSignatureInput {
   skipBlockKinds: readonly string[];
   isPlainText: boolean;
   namespace: string | null;
+  /**
+   * PDF only: set when a reparse changed the layout's narration text, so the
+   * new layout gets its own plan and audio. Absent for every other layout.
+   */
+  narrationRevision?: string | null;
 }
 
 /**
@@ -79,6 +84,8 @@ export function segmentationSignatureCanonical(input: SegmentationSignatureInput
     skipBlockKinds: [...input.skipBlockKinds].map((kind) => kind.trim()).filter(Boolean).sort(),
     isPlainText: Boolean(input.isPlainText),
     namespace: input.namespace ?? null,
+    // Omitted when absent so existing plans and audio keep their identity.
+    ...(input.narrationRevision ? { narrationRevision: input.narrationRevision } : {}),
   });
 }
 

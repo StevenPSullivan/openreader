@@ -1,4 +1,5 @@
 import { hashOpKey } from '../../infrastructure/nats-adapters';
+import { PARSED_PDF_NARRATION_REVISION_METADATA } from '../../infrastructure/storage';
 import type { WorkerOperationRequest } from '../../operations/contracts';
 import {
   buildDocumentConversionOperationKey,
@@ -166,10 +167,13 @@ export function registerDocumentResolutionRoutes(context: ComputeWorkerRouteCont
       prefix: s3Prefix,
     });
     const hasArtifact = await deps.artifactExists?.(artifactKey) ?? false;
+    const narrationRevision = hasArtifact
+      ? (await context.storage.headObject?.(artifactKey))?.metadata[PARSED_PDF_NARRATION_REVISION_METADATA]
+      : undefined;
     const index = await deps.operationStateStore.getOpIndex?.(buildPdfOperationKey(parsed.data));
     const operation = index?.opId ? await deps.operationStateStore.getOpState(index.opId) : null;
     return {
-      artifact: hasArtifact ? { objectKey: artifactKey } : null,
+      artifact: hasArtifact ? { objectKey: artifactKey, ...(narrationRevision ? { narrationRevision } : {}) } : null,
       operation: operation ? toComputeOperation(operation) : null,
     };
   });
