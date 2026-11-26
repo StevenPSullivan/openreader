@@ -1,12 +1,12 @@
 {
-  "revision": "188c71959f1bd8b3783b0bdd2d22df5d14eab05f",
+  "revision": "f1efd7559477b93a3afb8e6f1cd68c7521a3f55a",
   "project": "compute-worker",
   "tests": [
-    "packages/compute-worker/tests/unit/kokoro-engine-synthesis.test.ts",
-    "packages/compute-worker/tests/unit/kokoro-engine.test.ts",
-    "packages/compute-worker/tests/unit/kokoro-learned-g2p.test.ts",
-    "packages/compute-worker/tests/unit/kokoro-misaki-g2p.test.ts",
-    "packages/compute-worker/tests/unit/kokoro-model-files.test.ts",
-    "packages/compute-worker/tests/unit/playback-kokoro-timings.test.ts"
+    "packages/compute-worker/tests/unit/pdf-reparse-narration-revision.test.ts",
+    "packages/compute-worker/tests/unit/storage-usage.test.ts",
+    "packages/compute-worker/tests/unit/tts-playback-derivation.test.ts",
+    "packages/compute-worker/tests/unit/pdf-layout-resume.test.ts",
+    "packages/compute-worker/tests/unit/pdf-artifact-persistence.test.ts",
+    "packages/compute-worker/tests/unit/playback-job-cache-discovery.test.ts"
   ]
 }
