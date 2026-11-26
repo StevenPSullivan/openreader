@@ -1,11 +1,11 @@
 {
-  "revision": "28dc02f36f2935143085e3f33b03190be71baf95",
+  "revision": "df5a8a101d796fc54da783dfb06db967ac166e18",
   "project": "compute-worker",
   "tests": [
-    "packages/compute-worker/tests/compute/algorithms/pdf-merge-text-with-regions.test.ts",
-    "packages/compute-worker/tests/compute/algorithms/pdf-stitch-cross-page-blocks.test.ts",
+    "packages/compute-worker/tests/unit/pdf-reparse-narration-revision.test.ts",
     "packages/compute-worker/tests/unit/tts-playback-derivation.test.ts",
     "packages/compute-worker/tests/unit/pdf-layout-resume.test.ts",
-    "packages/compute-worker/tests/unit/pdf-artifact-persistence.test.ts"
+    "packages/compute-worker/tests/unit/pdf-artifact-persistence.test.ts",
+    "packages/compute-worker/tests/unit/playback-job-cache-discovery.test.ts"
   ]
 }
