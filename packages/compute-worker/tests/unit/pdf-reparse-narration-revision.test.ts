@@ -227,10 +227,13 @@ function pdfLayout(text: string, narrationRevision?: string): ParsedPdfDocument 
 
 function planStorage(layout: ParsedPdfDocument) {
   const objects = new Map<string, Buffer>([[LAYOUT_KEY, Buffer.from(JSON.stringify(layout))]]);
+  const failures = new Map<string, { error: Error; times: number }>();
   const storage = {
     readObject: async (key: string) => {
       const body = objects.get(key);
-      if (!body) throw new Error(`missing ${key}`);
+      const failure = failures.get(key);
+      if (failure && failure.times > 0) { failure.times -= 1; throw failure.error; }
+      if (!body) throw Object.assign(new Error(`missing ${key}`), { name: 'NoSuchKey' });
       return Uint8Array.from(body).buffer;
     },
     putObject: async (key: string, body: Buffer | Uint8Array) => { objects.set(key, Buffer.from(body)); },
@@ -238,6 +241,8 @@ function planStorage(layout: ParsedPdfDocument) {
   return {
     storage,
     objects,
+    /** The next `times` reads of `key` fail with `error`. */
+    failNext: (key: string, error: Error, times = 1) => failures.set(key, { error, times }),
     replaceLayout: (next: ParsedPdfDocument) => objects.set(LAYOUT_KEY, Buffer.from(JSON.stringify(next))),
   };
 }
@@ -283,16 +288,47 @@ describe('Force reparse plan identity', () => {
     const planned = await plan(memory, planRequest(first));
     memory.objects.delete(planned.planObjectKey);
 
-    // The layout changed again before the reader asked for its cleared plan.
+    // The layout changed again before an audiobook requested on the first
+    // revision asked for its cleared plan: the worker confirms the change.
     const second = 'd'.repeat(32);
     memory.replaceLayout(pdfLayout('Second replacement.', second));
-    await expect(plan(memory, { ...planRequest(second), planObjectKey: planned.planObjectKey }))
+    await expect(plan(memory, { ...planRequest(first), planObjectKey: planned.planObjectKey }))
       .rejects.toMatchObject({ code: 'PDF_LAYOUT_CHANGED' });
+    // A reader that only knows the current revision is asked to reopen instead,
+    // and nothing is written under the old key either way.
+    const reopen = plan(memory, { ...planRequest(second), planObjectKey: planned.planObjectKey });
+    await expect(reopen).rejects.toThrow('Reopen the document');
+    await expect(reopen).rejects.not.toHaveProperty('code', 'PDF_LAYOUT_CHANGED');
     expect(memory.objects.has(planned.planObjectKey)).toBe(false);
 
     // Its own revision can still rebuild it under the same key.
     memory.replaceLayout(pdfLayout('First replacement.', first));
     const rebuilt = await plan(memory, { ...planRequest(first), planObjectKey: planned.planObjectKey });
     expect(rebuilt.plannedSegments.map((segment) => segment.text)).toEqual(['First replacement.']);
+  });
+
+  test('a saved plan that storage fails to read is not reported as a replaced layout', async () => {
+    const memory = planStorage(pdfLayout('Original text.'));
+    const planned = await plan(memory, planRequest());
+    memory.replaceLayout(pdfLayout('Newer text.', 'd'.repeat(32)));
+    const unavailable = Object.assign(new Error('Service Unavailable'), { $metadata: { httpStatusCode: 503 } });
+    // One failed read: the plan is read again before any verdict, and found.
+    memory.failNext(planned.planObjectKey, unavailable);
+    const recovered = await plan(memory, { ...planRequest(), planObjectKey: planned.planObjectKey });
+    expect(recovered.plannedSegments.map((segment) => segment.text)).toEqual(['Original text.']);
+    // Storage that keeps failing raises its own error, which can be retried.
+    memory.failNext(planned.planObjectKey, unavailable, 2);
+    await expect(plan(memory, { ...planRequest(), planObjectKey: planned.planObjectKey })).rejects.toThrow('Service Unavailable');
+  });
+
+  test('a never-reparsed PDF whose skip settings changed plans its cleared saved key as before', async () => {
+    const memory = planStorage(pdfLayout('Table text.'));
+    const planned = await plan(memory, planRequest());
+    memory.objects.delete(planned.planObjectKey);
+    const skipping = planRequest();
+    skipping.planning.documentSource.skipBlockKinds = ['header'];
+    const replanned = await plan(memory, { ...skipping, planObjectKey: planned.planObjectKey });
+    expect(replanned.planObjectKey).toBe(planned.planObjectKey);
+    expect(replanned.plannedSegments.map((segment) => segment.text)).toEqual(['Table text.']);
   });
 });
