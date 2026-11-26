@@ -229,8 +229,9 @@ export const ttsPlaybackCacheReclaimSchema = z.object({
   storageUserId: z.string().trim().min(1).max(256),
   documentId: documentIdSchema,
   /**
-   * The cache variant to keep. Omit `settingsHash` to keep every variant of
-   * that version; pass null to reclaim every variant of the document.
+   * The cache variant to keep, with its settings on every PDF layout
+   * revision. Omit `settingsHash` to keep every variant of that version; pass
+   * null to reclaim every variant of the document.
    */
   keep: z.object({
     documentVersion: z.number().int().nonnegative(),

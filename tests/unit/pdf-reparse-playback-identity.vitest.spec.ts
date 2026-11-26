@@ -6,6 +6,7 @@ const mocks = vi.hoisted(() => ({
   variants: vi.fn(),
   saved: vi.fn(),
   defaultRequest: vi.fn(),
+  scope: vi.fn(),
 }));
 
 vi.mock('@/lib/server/pdf-parse/operation', () => ({ resolveCurrentPdfParse: mocks.resolveLayout }));
@@ -20,9 +21,13 @@ vi.mock('@/lib/server/compute-worker/client', () => ({
 vi.mock('@/lib/server/audiobooks/request', () => ({ loadSavedPlayback: mocks.saved }));
 vi.mock('@/lib/server/reader/playback', () => ({ resolveDefaultPlaybackRequest: mocks.defaultRequest }));
 vi.mock('@/lib/server/tts/cloned-voices', () => ({ listClonedVoices: async () => [] }));
+vi.mock('@/lib/server/tts/segments-auth', () => ({ resolveSegmentDocumentScope: mocks.scope }));
 
 import { buildTtsPlaybackPlanningInput, type ParsedTtsPlaybackRequestBody } from '@/lib/server/tts/playback-request';
+import { NextRequest } from 'next/server';
 import { listCachedVoices } from '@/lib/server/tts/cached-voices';
+import { resolveDocumentStorageScope } from '@/lib/server/tts/storage-scope';
+import { ttsPlaybackSettingsIdentity } from '@openreader/tts/segments';
 import type { ResolvedSegmentDocumentScope } from '@/lib/server/tts/segments-auth';
 
 const DOCUMENT_ID = 'a'.repeat(64);
@@ -97,6 +102,28 @@ describe('PDF playback identity after Force reparse', () => {
     const foreign = `openreader/tts_playback_plan_v1/${'b'.repeat(64)}/7/pdf/${'2'.repeat(32)}.json`;
     expect(await buildTtsPlaybackPlanningInput(request({ planObjectKey: foreign }), scope)).toEqual(reparsed);
     expect(mocks.readPlan).not.toHaveBeenCalledWith(foreign);
+  });
+
+  test('storage and reclaim measure the current settings on every layout without reading it', async () => {
+    const legacy = await buildTtsPlaybackPlanningInput(request(), scope);
+    const otherVoice = await buildTtsPlaybackPlanningInput(request({ settings: { ...request().settings, voice: 'Kiki' } }), scope);
+    currentLayout(REVISION);
+    const reparsed = await buildTtsPlaybackPlanningInput(request(), scope);
+    expect(ttsPlaybackSettingsIdentity(reparsed.settingsHash)).toBe(legacy.settingsHash);
+    expect(ttsPlaybackSettingsIdentity(legacy.settingsHash)).toBe(legacy.settingsHash);
+    expect(ttsPlaybackSettingsIdentity(otherVoice.settingsHash)).not.toBe(legacy.settingsHash);
+
+    mocks.scope.mockResolvedValue(scope);
+    mocks.resolveLayout.mockClear();
+    const body = { ...request(), planning: { skipBlockKinds: ['header', 'footer'] } };
+    for (const planObjectKey of [undefined, OLD_PLAN, NEW_PLAN]) {
+      const resolved = await resolveDocumentStorageScope(new NextRequest('http://localhost/api/tts/storage/document', {
+        method: 'POST', body: JSON.stringify({ ...body, ...(planObjectKey ? { planObjectKey } : {}) }),
+      }));
+      expect(resolved).toMatchObject({ settingsHash: legacy.settingsHash });
+    }
+    expect(mocks.resolveLayout).not.toHaveBeenCalled();
+    expect(mocks.readPlan).not.toHaveBeenCalled();
   });
 
   test('other readers never look up a PDF layout', async () => {

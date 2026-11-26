@@ -105,12 +105,28 @@ export function buildTtsPlaybackSettingsHash(
   settings: TTSSegmentSettings,
   segmentation: SegmentationSignatureInput,
 ): string {
+  const { narrationRevision, ...layoutIndependent } = segmentation;
   const separator = String.fromCharCode(0);
-  return createHash('sha256')
+  const hash = createHash('sha256')
     .update(settingsCanonical(settings))
     .update(separator)
-    .update(segmentationSignatureCanonical(segmentation))
+    .update(segmentationSignatureCanonical(layoutIndependent))
     .digest('hex');
+  // A reparsed PDF layout keeps its audio apart by revision, after the part
+  // that every layout of the document shares with these settings.
+  return narrationRevision ? `${hash}${NARRATION_REVISION_SEPARATOR}${narrationRevision}` : hash;
+}
+
+const NARRATION_REVISION_SEPARATOR = '.';
+
+/**
+ * The part of a playback settings hash that names the provider, voice, speed
+ * and segmentation settings without the PDF layout revision. Audio made with
+ * the same settings on another layout of the same document version shares it.
+ */
+export function ttsPlaybackSettingsIdentity(settingsHash: string): string {
+  const end = settingsHash.indexOf(NARRATION_REVISION_SEPARATOR);
+  return end === -1 ? settingsHash : settingsHash.slice(0, end);
 }
 
 export function buildTtsSegmentSettingsJson(settings: TTSSegmentSettings): TTSSegmentSettings | string {
