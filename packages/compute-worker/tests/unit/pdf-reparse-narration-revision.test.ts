@@ -321,14 +321,38 @@ describe('Force reparse plan identity', () => {
     await expect(plan(memory, { ...planRequest(), planObjectKey: planned.planObjectKey })).rejects.toThrow('Service Unavailable');
   });
 
-  test('a never-reparsed PDF whose skip settings changed plans its cleared saved key as before', async () => {
-    const memory = planStorage(pdfLayout('Table text.'));
+  test('a cleared saved key is never rebuilt from other settings', async () => {
+    const layout = pdfLayout('Spruce log 41 cm.');
+    layout.pages[0]!.blocks.unshift({
+      id: 'p1-b-prose', kind: 'text', text: 'Station notes.',
+      fragments: [{ page: 1, bbox: [0, 0, 1, 1], text: 'Station notes.', readingOrder: 0 }],
+    } as never);
+    const memory = planStorage(layout);
     const planned = await plan(memory, planRequest());
+    expect(planned.plannedSegments.map((segment) => segment.text)).toEqual(['Station notes.', 'Spruce log 41 cm.']);
     memory.objects.delete(planned.planObjectKey);
+    // An audiobook kept the saved key while the document began skipping tables.
     const skipping = planRequest();
-    skipping.planning.documentSource.skipBlockKinds = ['header'];
-    const replanned = await plan(memory, { ...skipping, planObjectKey: planned.planObjectKey });
-    expect(replanned.planObjectKey).toBe(planned.planObjectKey);
-    expect(replanned.plannedSegments.map((segment) => segment.text)).toEqual(['Table text.']);
+    skipping.planning.documentSource.skipBlockKinds = ['table'];
+    const refused = plan(memory, { ...skipping, planObjectKey: planned.planObjectKey });
+    await expect(refused).rejects.toThrow('Reopen the document');
+    await expect(refused).rejects.not.toHaveProperty('code', 'PDF_LAYOUT_CHANGED');
+    expect(memory.objects.has(planned.planObjectKey)).toBe(false);
+    // The request with the settings that key names rebuilds it, with the table.
+    const rebuilt = await plan(memory, { ...planRequest(), planObjectKey: planned.planObjectKey });
+    expect(rebuilt.plannedSegments.map((segment) => segment.text)).toEqual(['Station notes.', 'Spruce log 41 cm.']);
+  });
+
+  test('a plan recovered after a failed read is used as stored, not rewritten', async () => {
+    const memory = planStorage(pdfLayout('Original text.'));
+    const planned = await plan(memory, planRequest());
+    const stored = memory.objects.get(planned.planObjectKey)!;
+    const revision = 'd'.repeat(32);
+    memory.replaceLayout(pdfLayout('Newer text.', revision));
+    // A reader that resolved the current revision while the key was missing.
+    memory.failNext(planned.planObjectKey, Object.assign(new Error('Service Unavailable'), { $metadata: { httpStatusCode: 503 } }));
+    const recovered = await plan(memory, { ...planRequest(revision), planObjectKey: planned.planObjectKey });
+    expect(recovered.plannedSegments.map((segment) => segment.text)).toEqual(['Original text.']);
+    expect(memory.objects.get(planned.planObjectKey)).toBe(stored);
   });
 });
