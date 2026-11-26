@@ -7870,6 +7870,9 @@
                     },
                     "truncated": {
                       "type": "boolean"
+                    },
+                    "exportsComplete": {
+                      "type": "boolean"
                     }
                   },
                   "required": [

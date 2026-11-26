@@ -1289,6 +1289,7 @@ export interface paths {
                             }[];
                             scannedObjects: number;
                             truncated: boolean;
+                            exportsComplete?: boolean;
                         };
                     };
                 };

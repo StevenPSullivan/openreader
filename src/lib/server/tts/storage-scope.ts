@@ -32,14 +32,13 @@ export async function resolveDocumentStorageScope(
   if (!parsed) return NextResponse.json({ error: 'Invalid request payload' }, { status: 400 });
   const scope = await resolveSegmentDocumentScope(request, parsed.documentId);
   if (scope instanceof Response) return scope;
-  const { settingsHash, planning } = await buildTtsPlaybackPlanningInput(parsed, scope);
-  return {
-    documentId: parsed.documentId,
-    scope,
-    settingsHash,
-    parsed,
-    narrationRevision: planning.documentSource?.narrationRevision ?? null,
-  };
+  // Storage measures against the published layout, whatever plan the request
+  // names. Audio for an earlier layout's plan is kept through its export.
+  const narrationRevision = scope.readerType === 'pdf'
+    ? await resolvePdfNarrationRevision(parsed.documentId, scope)
+    : null;
+  const { settingsHash } = await buildTtsPlaybackPlanningInput(parsed, scope, { narrationRevision });
+  return { documentId: parsed.documentId, scope, settingsHash, parsed, narrationRevision };
 }
 
 /**
@@ -50,14 +49,14 @@ export async function resolveDocumentStorageScope(
  * audio for other voices or settings stays reclaimable. The storage screen and
  * reclaim use the same set.
  *
- * Null means the report cannot rule out an export on an earlier layout (it was
- * truncated or could not attribute an export), so the whole current version is
+ * Null means the report cannot rule out an export on an earlier layout (not
+ * every export was listed and attributed), so the whole current version is
  * kept. Only a layout a reparse changed can have earlier-layout exports.
  */
 export async function pinnedSettingsHashes(
   resolved: DocumentStorageScope,
   report: {
-    truncated: boolean;
+    exportsComplete?: boolean;
     exports: ReadonlyArray<{ documentVersion: number | null; settingsHash: string | null; planObjectKey?: string }>;
   },
 ): Promise<string[] | null> {
@@ -66,7 +65,7 @@ export async function pinnedSettingsHashes(
   const { exports } = report;
   const unattributed = exports.some((row) => row.documentVersion === null || row.settingsHash === null
     || (row.documentVersion === scope.documentVersion && row.settingsHash !== resolved.settingsHash && !row.planObjectKey));
-  if (report.truncated || unattributed) return null;
+  if (report.exportsComplete !== true || unattributed) return null;
   const candidates: Array<{ settingsHash: string; narrationRevision: string | null }> = [];
   for (const row of exports) {
     if (row.documentVersion !== scope.documentVersion || !row.settingsHash || !row.planObjectKey

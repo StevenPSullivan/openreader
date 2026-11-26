@@ -31,7 +31,7 @@ export async function POST(request: NextRequest) {
       documentId: resolved.documentId,
       documentVersion: resolved.scope.documentVersion,
       settingsHash: resolved.settingsHash,
-      settingsHashes: await pinnedSettingsHashes(resolved, { truncated: report.truncated, exports }),
+      settingsHashes: await pinnedSettingsHashes(resolved, { exportsComplete: report.exportsComplete, exports }),
     }));
   } catch (error) {
     if (isComputeWorkerEndpointMissingError(error)) {

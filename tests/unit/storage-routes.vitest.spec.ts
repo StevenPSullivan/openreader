@@ -161,6 +161,7 @@ describe('storage routes', () => {
       }],
       scannedObjects: 8,
       truncated: false,
+      exportsComplete: true,
     });
     const usage = await documentUsage(post('/api/tts/storage/document', { documentId: 'doc-1' }));
     expect(await usage.json()).toEqual({
@@ -174,7 +175,7 @@ describe('storage routes', () => {
     }, expect.anything());
     // Both requests judged the same report.
     expect(mocks.pinned.mock.calls.map((call) => call[1])).toEqual([
-      { truncated: false, exports: [pinnedExport] }, { truncated: false, exports: [pinnedExport] },
+      { exportsComplete: true, exports: [pinnedExport] }, { exportsComplete: true, exports: [pinnedExport] },
     ]);
   });
 
@@ -190,6 +191,7 @@ describe('storage routes', () => {
       }],
       scannedObjects: 200_000,
       truncated: true,
+      exportsComplete: false,
     });
     const usage = await documentUsage(post('/api/tts/storage/document', { documentId: 'doc-1' }));
     expect(await usage.json()).toEqual({

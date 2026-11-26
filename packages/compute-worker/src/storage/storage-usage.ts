@@ -44,6 +44,11 @@ export type StorageUsageReport = {
   scannedObjects: number;
   /** True when the scan stopped at the object budget; totals are a lower bound. */
   truncated: boolean;
+  /**
+   * With `attributeExports`: true when every export was listed and its
+   * metadata read, whatever the audio and derived-object counts.
+   */
+  exportsComplete?: boolean;
 };
 
 type MutableDocumentUsage = {
@@ -126,14 +131,12 @@ export async function collectStorageUsage(input: {
     variants.set(variantKey, variant);
   };
 
+  let exportsComplete = true;
   if (input.includePlayback !== false) {
     const audioRoot = `${s3Prefix}/tts_playback_segments_audio_v1/users/${encodeURIComponent(storageUserId)}/docs/`;
     const sidecarRoot = `${s3Prefix}/tts_playback_segments_v1/users/${storageUserHash(storageUserId)}/docs/`;
-    await scan(`${audioRoot}${documentSegment}`, (key, size) => addVariant(`${documentSegment}${key}`, size));
-    await scan(`${sidecarRoot}${documentSegment}`, (key, size) => addVariant(`${documentSegment}${key}`, size));
-
     const exportRoot = `${ttsPlaybackExportArtifactScopePrefix({ storageUserId, prefix: s3Prefix })}docs/`;
-    await scan(`${exportRoot}${documentSegment}`, (key, size) => {
+    const scanExports = () => scan(`${exportRoot}${documentSegment}`, (key, size) => {
       const [documentId, artifactId, file] = `${documentSegment}${key}`.split('/');
       if (!documentId || !DOCUMENT_ID_REGEX.test(documentId) || !artifactId || !file) return;
       const exports = documentUsage(documentId).exports;
@@ -144,6 +147,15 @@ export async function collectStorageUsage(input: {
       if (file === 'metadata.json') usage.metadataKey = `${exportRoot}${documentId}/${artifactId}/metadata.json`;
       exports.set(artifactId, usage);
     });
+    // Attribution decides what reclaim may delete, so exports come first and a
+    // large audio cache cannot use up the budget before they are listed.
+    if (input.attributeExports) {
+      await scanExports();
+      exportsComplete = !truncated;
+    }
+    await scan(`${audioRoot}${documentSegment}`, (key, size) => addVariant(`${documentSegment}${key}`, size));
+    await scan(`${sidecarRoot}${documentSegment}`, (key, size) => addVariant(`${documentSegment}${key}`, size));
+    if (!input.attributeExports) await scanExports();
   }
 
   if (input.attributeExports) {
@@ -154,6 +166,7 @@ export async function collectStorageUsage(input: {
         const metadata = await storage.readObject(row.metadataKey!)
           .then((bytes) => JSON.parse(Buffer.from(bytes).toString('utf8')) as Record<string, unknown>)
           .catch(() => null);
+        if (!metadata) exportsComplete = false;
         const documentVersion = Number(metadata?.documentVersion);
         if (Number.isSafeInteger(documentVersion)) row.documentVersion = documentVersion;
         if (typeof metadata?.settingsHash === 'string' && metadata.settingsHash) row.settingsHash = metadata.settingsHash;
@@ -197,6 +210,7 @@ export async function collectStorageUsage(input: {
       .sort((a, b) => a.documentId.localeCompare(b.documentId)),
     scannedObjects,
     truncated,
+    ...(input.attributeExports ? { exportsComplete } : {}),
   };
 }
 

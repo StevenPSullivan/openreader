@@ -119,6 +119,41 @@ describe('storage usage', () => {
     }]);
     expect(usage.derivedBytes).toBe(11 + 13 + 17);
     expect(usage.derivedObjects).toBe(3);
+    expect(report.exportsComplete).toBe(true);
+  });
+
+  test('lists exports before audio so a full audio cache cannot hide them', async () => {
+    const storage = new MemoryStorage(1);
+    await seed(storage);
+    // The budget covers the export's two objects and nothing else.
+    const report = await collectStorageUsage({
+      storage, s3Prefix: prefix, storageUserId: user, documentId: docA, attributeExports: true, maxObjects: 2,
+    });
+    expect(report.truncated).toBe(true);
+    expect(report.exportsComplete).toBe(true);
+    expect(report.documents[0]?.exports).toEqual([expect.objectContaining({ settingsHash: 'othervoice', objects: 2 })]);
+
+    const tooSmall = await collectStorageUsage({
+      storage, s3Prefix: prefix, storageUserId: user, documentId: docA, attributeExports: true, maxObjects: 1,
+    });
+    expect(tooSmall.exportsComplete).toBe(false);
+  });
+
+  test('reports exports incomplete when one cannot be attributed', async () => {
+    const storage = new MemoryStorage();
+    await seed(storage);
+    const readObject = storage.readObject.bind(storage);
+    storage.readObject = async (key: string) => {
+      if (key.endsWith('/metadata.json')) throw new Error('transient read failure');
+      return readObject(key);
+    };
+    const report = await collectStorageUsage({
+      storage, s3Prefix: prefix, storageUserId: user, documentId: docA, attributeExports: true,
+    });
+    expect(report.truncated).toBe(false);
+    expect(report.exportsComplete).toBe(false);
+    // A library scan does not attribute exports and reports no completeness.
+    expect(await collectStorageUsage({ storage, s3Prefix: prefix, storageUserId: user })).not.toHaveProperty('exportsComplete');
   });
 
   test('scans a whole library without reading export metadata', async () => {

@@ -117,11 +117,18 @@ describe('PDF playback identity after Force reparse', () => {
       method: 'POST', body: JSON.stringify(body),
     }));
     if (resolved instanceof Response) throw new Error('scope did not resolve');
+    expect(resolved).toMatchObject({ narrationRevision: REVISION });
+
+    // A request naming a pre-reparse plan is still measured against the published layout.
+    const stale = await resolveDocumentStorageScope(new NextRequest('http://localhost/api/tts/storage/document', {
+      method: 'POST', body: JSON.stringify({ ...body, planObjectKey: OLD_PLAN }),
+    }));
+    expect(stale).toMatchObject({ settingsHash: resolved.settingsHash, narrationRevision: REVISION });
     const missing = `${PLAN_PREFIX}${'3'.repeat(32)}.json`;
     const exportOf = (settingsHash: string, planObjectKey: string, documentVersion = 7) => (
       { documentVersion, settingsHash, planObjectKey, bytes: 100, objects: 2 });
     mocks.liveVariants.mockResolvedValue([]);
-    const report = (exports: ReturnType<typeof exportOf>[], truncated = false) => ({ truncated, exports });
+    const report = (exports: ReturnType<typeof exportOf>[], exportsComplete = true) => ({ exportsComplete, exports });
 
     // An export made with the current settings on the earlier layout keeps its
     // audio even after its request was pruned. Another voice's export does not
@@ -137,7 +144,8 @@ describe('PDF playback identity after Force reparse', () => {
     expect(await pinnedSettingsHashes(resolved, report([exportOf(legacyOtherVoice.settingsHash, OLD_PLAN)]))).toEqual([]);
 
     // A report that may miss an export cannot clear any variant of this version.
-    expect(await pinnedSettingsHashes(resolved, report([exportOf(legacy.settingsHash, OLD_PLAN)], true))).toBeNull();
+    expect(await pinnedSettingsHashes(resolved, report([exportOf(legacy.settingsHash, OLD_PLAN)], false))).toBeNull();
+    expect(await pinnedSettingsHashes(resolved, { exports: [exportOf(legacy.settingsHash, OLD_PLAN)] })).toBeNull();
     expect(await pinnedSettingsHashes(resolved, report([
       { documentVersion: null, settingsHash: null, bytes: 100, objects: 2 } as never,
     ]))).toBeNull();
@@ -145,7 +153,7 @@ describe('PDF playback identity after Force reparse', () => {
       { documentVersion: 7, settingsHash: legacy.settingsHash, bytes: 100, objects: 2 } as never,
     ]))).toBeNull();
     // A layout no reparse changed has no earlier-layout exports to protect.
-    expect(await pinnedSettingsHashes({ ...resolved, narrationRevision: null }, report([], true))).toEqual([]);
+    expect(await pinnedSettingsHashes({ ...resolved, narrationRevision: null }, report([], false))).toEqual([]);
 
     // A live request still preparing on an earlier layout keeps its audio when
     // it uses the current settings.

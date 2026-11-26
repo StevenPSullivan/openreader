@@ -34,7 +34,7 @@ export async function POST(request: NextRequest) {
         namespace: null,
       }, { signal });
       pinned = await pinnedSettingsHashes(resolved, {
-        truncated: report.truncated,
+        exportsComplete: report.exportsComplete,
         exports: report.documents.find((row) => row.documentId === resolved.documentId)?.exports ?? [],
       });
     }

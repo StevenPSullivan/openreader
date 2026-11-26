@@ -281,6 +281,8 @@ export const userStorageUsageResponseSchema = z.object({
   })),
   scannedObjects: z.number(),
   truncated: z.boolean(),
+  /** Document-scoped scans: every export was listed and attributed. */
+  exportsComplete: z.boolean().optional(),
 });
 
 export const maintenanceOperationCreateSchema = z.object({
