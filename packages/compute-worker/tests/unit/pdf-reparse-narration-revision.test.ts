@@ -272,8 +272,8 @@ describe('Force reparse plan identity', () => {
 
   test('planning refuses a layout whose revision does not match the request', async () => {
     const memory = planStorage(pdfLayout('Newer text.', 'd'.repeat(32)));
-    await expect(plan(memory, planRequest())).rejects.toThrow('PDF layout changed');
-    await expect(plan(memory, planRequest('e'.repeat(32)))).rejects.toThrow('PDF layout changed');
+    await expect(plan(memory, planRequest())).rejects.toMatchObject({ code: 'PDF_LAYOUT_CHANGED', retryable: false });
+    await expect(plan(memory, planRequest('e'.repeat(32)))).rejects.toMatchObject({ code: 'PDF_LAYOUT_CHANGED' });
     expect([...memory.objects.keys()]).toEqual([LAYOUT_KEY]);
   });
 
@@ -287,7 +287,7 @@ describe('Force reparse plan identity', () => {
     const second = 'd'.repeat(32);
     memory.replaceLayout(pdfLayout('Second replacement.', second));
     await expect(plan(memory, { ...planRequest(second), planObjectKey: planned.planObjectKey }))
-      .rejects.toThrow('no longer available');
+      .rejects.toMatchObject({ code: 'PDF_LAYOUT_CHANGED' });
     expect(memory.objects.has(planned.planObjectKey)).toBe(false);
 
     // Its own revision can still rebuild it under the same key.
