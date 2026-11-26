@@ -196,7 +196,7 @@ function planRequest(narrationRevision?: string) {
       enforceSourceBoundaries: true,
       documentSource: {
         namespace: null,
-        skipBlockKinds: [],
+        skipBlockKinds: [] as string[],
         extent: 'document' as const,
         ...(narrationRevision ? { narrationRevision } : {}),
       },
