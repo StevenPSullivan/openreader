@@ -118,6 +118,8 @@ export function createPdfLayoutHandler(input: PdfLayoutJobContext) {
           result.parsed,
           parsePreviousPdfLayout(await input.storage.readObject(resultKey, ioSignal(Math.max(input.pdfTimeoutMs, 1_000)))),
         ) : undefined;
+        // Reading a large layout takes time; another attempt may own the job now.
+        if (revision) await execution.assertActive();
         try {
           return await input.storage.putParsedPdf(parsed.documentId, parsed.namespace, {
             ...result.parsed,
