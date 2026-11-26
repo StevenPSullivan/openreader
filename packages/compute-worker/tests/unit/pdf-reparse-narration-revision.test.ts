@@ -153,6 +153,31 @@ describe('Force reparse layout narration revision', () => {
     })).rejects.toThrow('cancelled');
     expect(memory.layout()).toEqual(saved);
   });
+
+  test('an attempt that loses the job while reading the previous layout does not publish', async () => {
+    const memory = memoryStorage();
+    const parse = await layoutRunner(memory);
+    await parse();
+    const saved = withFirstBlockText(memory.layout(), 'Older text.');
+    memory.seedLayout(saved);
+    let owner = true;
+    const readObject = memory.storage.readObject;
+    memory.storage.readObject = async (key, signal) => {
+      const body = await readObject(key, signal);
+      // A redelivered attempt takes over while this one reads the layout it replaces.
+      if (key === LAYOUT_KEY) owner = false;
+      return body;
+    };
+    const run = createPdfLayoutHandler({
+      storage: memory.storage, s3Prefix: PREFIX, pdfTimeoutMs: 5000, pdfHardCapMs: 10000, ttsPlaybackSegmentTimeoutMs: 5000,
+    });
+    await expect(run({ documentId: DOCUMENT_ID, namespace: null, documentObjectKey: 'test/source.pdf' }, 0, {
+      opId: 'op-superseded', operationKey: 'pdf_layout|superseded', attempt: 1, signal: new AbortController().signal,
+      assertActive: async () => { if (!owner) throw new Error('attempt superseded'); },
+      onProgress: async () => {},
+    })).rejects.toThrow('superseded');
+    expect(memory.layout()).toEqual(saved);
+  });
 });
 
 const SETTINGS_JSON = { voice: 'alloy', providerRef: 'p', providerType: 'openai', ttsModel: 'm', nativeSpeed: 1 };
@@ -250,5 +275,24 @@ describe('Force reparse plan identity', () => {
     await expect(plan(memory, planRequest())).rejects.toThrow('PDF layout changed');
     await expect(plan(memory, planRequest('e'.repeat(32)))).rejects.toThrow('PDF layout changed');
     expect([...memory.objects.keys()]).toEqual([LAYOUT_KEY]);
+  });
+
+  test('a cleared plan is planned again only under its own key', async () => {
+    const first = 'c'.repeat(32);
+    const memory = planStorage(pdfLayout('First replacement.', first));
+    const planned = await plan(memory, planRequest(first));
+    memory.objects.delete(planned.planObjectKey);
+
+    // The layout changed again before the reader asked for its cleared plan.
+    const second = 'd'.repeat(32);
+    memory.replaceLayout(pdfLayout('Second replacement.', second));
+    await expect(plan(memory, { ...planRequest(second), planObjectKey: planned.planObjectKey }))
+      .rejects.toThrow('no longer available');
+    expect(memory.objects.has(planned.planObjectKey)).toBe(false);
+
+    // Its own revision can still rebuild it under the same key.
+    memory.replaceLayout(pdfLayout('First replacement.', first));
+    const rebuilt = await plan(memory, { ...planRequest(first), planObjectKey: planned.planObjectKey });
+    expect(rebuilt.plannedSegments.map((segment) => segment.text)).toEqual(['First replacement.']);
   });
 });

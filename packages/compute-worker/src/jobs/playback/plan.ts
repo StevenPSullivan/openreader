@@ -327,6 +327,11 @@ export async function resolveAndPersistTtsPlaybackPlan(input: {
   const write = await prepareArtifactWrite(input.storage, planObjectKey, input.attempt);
   let plannedSegments = await readPersistedTtsPlaybackPlanSegments(input.storage, planObjectKey);
   if (!plannedSegments || plannedSegments.length === 0) {
+    // A saved plan that is gone is planned again only under its own key. Another
+    // request's key may name a different layout revision.
+    if (planObjectKey !== computedPlanObjectKey) {
+      throw new Error('The reading plan is no longer available. Reopen the document.');
+    }
     plannedSegments = planTtsPlaybackSegments(
       input.request,
       await resolvePlaybackSourceUnits(input.request, input.storage, input.s3Prefix),
