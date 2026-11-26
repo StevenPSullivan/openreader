@@ -78,15 +78,14 @@ async function seed(storage: MemoryStorage) {
   // Another user's audio must never be counted.
   await storage.putObject(`${prefix}/tts_playback_segments_audio_v1/users/user-2/docs/${docA}/3/current/x.mp3`, Buffer.alloc(999));
   const exportDir = `${prefix}/tts_playback_exports_v1/users/${user}/docs/${docA}/export-1`;
-  await storage.putObject(`${exportDir}/metadata.json`, Buffer.from(JSON.stringify({
-    documentVersion: 3,
-    settingsHash: 'othervoice',
-  })));
+  await storage.putObject(`${exportDir}/metadata.json`, Buffer.from(JSON.stringify(exportMetadata)));
   await storage.putObject(`${exportDir}/artifact.mp3`, Buffer.alloc(200));
   await storage.putObject(`${prefix}/documents_v1/parsed_v2/${docA}/v1.json`, Buffer.alloc(11));
   await storage.putObject(`${prefix}/document_previews_v1/ns/_default/${docA}/card-400.jpg`, Buffer.alloc(13));
   await storage.putObject(`${prefix}/tts_playback_plan_v1/${docA}/3/pdf/plan.json`, Buffer.alloc(17));
 }
+
+const exportMetadata = { documentVersion: 3, settingsHash: 'othervoice', planObjectKey: 'openreader/tts_playback_plan_v1/plan.json' };
 
 describe('storage usage', () => {
   test('groups one document by cache variant and attributes exports from metadata', async () => {
@@ -114,7 +113,8 @@ describe('storage usage', () => {
     expect(usage.exports).toEqual([{
       documentVersion: 3,
       settingsHash: 'othervoice',
-      bytes: 200 + Buffer.byteLength(JSON.stringify({ documentVersion: 3, settingsHash: 'othervoice' })),
+      planObjectKey: exportMetadata.planObjectKey,
+      bytes: 200 + Buffer.byteLength(JSON.stringify(exportMetadata)),
       objects: 2,
     }]);
     expect(usage.derivedBytes).toBe(11 + 13 + 17);

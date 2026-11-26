@@ -1280,6 +1280,7 @@ export interface paths {
                                 exports: {
                                     documentVersion: number | null;
                                     settingsHash: string | null;
+                                    planObjectKey?: string;
                                     bytes: number;
                                     objects: number;
                                 }[];

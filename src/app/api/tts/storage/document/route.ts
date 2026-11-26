@@ -3,7 +3,7 @@ import { getComputeWorkerClient, isComputeWorkerAvailable, isComputeWorkerEndpoi
   isComputeWorkerUnavailableError } from '@/lib/server/compute-worker/client';
 import { createRequestLogger } from '@/lib/server/logger';
 import { errorResponse } from '@/lib/server/errors/next-response';
-import { resolveDocumentStorageScope } from '@/lib/server/tts/storage-scope';
+import { pinnedSettingsHashes, resolveDocumentStorageScope } from '@/lib/server/tts/storage-scope';
 import { summarizeDocumentStorage } from '@/lib/server/tts/storage-usage';
 
 export const runtime = 'nodejs';
@@ -26,11 +26,12 @@ export async function POST(request: NextRequest) {
       derivedDocumentIds: [resolved.documentId],
       namespace: null,
     }, { signal: AbortSignal.timeout(45_000) });
+    const exports = report.documents.find((row) => row.documentId === resolved.documentId)?.exports ?? [];
     return NextResponse.json(summarizeDocumentStorage(report, {
       documentId: resolved.documentId,
       documentVersion: resolved.scope.documentVersion,
       settingsHash: resolved.settingsHash,
-      settingsHashes: resolved.pinnedSettingsHashes,
+      settingsHashes: await pinnedSettingsHashes(resolved, exports),
     }));
   } catch (error) {
     if (isComputeWorkerEndpointMissingError(error)) {

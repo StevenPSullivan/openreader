@@ -31,6 +31,7 @@ import {
   classifyExportGeneration,
   exportGenerationRunId,
   exportOperationIssue,
+  PDF_LAYOUT_CHANGED_ISSUE,
 } from '@/lib/server/tts/export-state';
 import {
   buildTtsPlaybackPlanningInput,
@@ -348,7 +349,14 @@ async function advanceAudiobook(input: {
     }
     const planResult = operation.result as TtsPlaybackPlanResult | undefined;
     if (operation.status === 'failed' || !planResult?.planObjectKey) {
-      return reportGeneration('failed', { operationId: operation.opId, issue: exportOperationIssue(operation) });
+      // Whatever stopped the plan, a request whose layout was since replaced
+      // can only be requested again.
+      const layoutChanged = scope.readerType === 'pdf' && intent.narrationRevision !== undefined
+        && intent.narrationRevision !== await resolvePdfNarrationRevision(documentId, scope);
+      return reportGeneration('failed', {
+        operationId: operation.opId,
+        issue: layoutChanged ? PDF_LAYOUT_CHANGED_ISSUE : exportOperationIssue(operation),
+      });
     }
     planObjectKey = planResult.planObjectKey;
     if (command !== 'read') await db.update(audiobookRequests).set({ planObjectKey }).where(eq(audiobookRequests.id, id));
@@ -804,26 +812,26 @@ export function deleteAudiobook(caller: AudiobookCaller, id: string, documentId:
 
 /** The document an audiobook request belongs to, so a caller can name it by its ID alone. */
 /**
- * The PDF layout revisions of this document version's live audiobook requests
- * that have a plan. Their audio and files stay in use after a Force reparse.
+ * The cache identity and PDF layout revision of each live audiobook request
+ * for this document version, including requests whose plan is still pending.
  */
-export async function audiobookNarrationRevisions(
+export async function liveAudiobookVariants(
   scope: ResolvedSegmentDocumentScope,
   documentId: string,
-): Promise<Array<string | null>> {
+): Promise<Array<{ settingsHash: string; narrationRevision: string | null }>> {
   const rows = await db.select().from(audiobookRequests).where(and(
     eq(audiobookRequests.userId, scope.storageUserId),
     eq(audiobookRequests.documentId, documentId),
   )) as Row[];
-  const revisions = new Set<string | null>();
+  const variants: Array<{ settingsHash: string; narrationRevision: string | null }> = [];
   for (const row of rows) {
-    if (row.cancelledAt || !row.planObjectKey || Number(row.documentVersion) !== scope.documentVersion) continue;
-    const stored = storedRecord(row.settingsJson).narrationRevision;
-    revisions.add(typeof stored === 'string' || stored === null
-      ? stored
-      : await resolvePdfNarrationRevision(documentId, scope, row.planObjectKey));
+    if (row.cancelledAt || Number(row.documentVersion) !== scope.documentVersion) continue;
+    const intent = intentFromRow(row);
+    if (!intent) continue;
+    const { settingsHash } = await planningInputFor(scope, intent);
+    variants.push({ settingsHash, narrationRevision: intent.narrationRevision ?? null });
   }
-  return [...revisions];
+  return variants;
 }
 
 export async function findAudiobookDocumentId(id: string, storageUserId: string): Promise<string | null> {

@@ -6,7 +6,7 @@ const mocks = vi.hoisted(() => ({
   variants: vi.fn(),
   saved: vi.fn(),
   defaultRequest: vi.fn(),
-  pinnedRevisions: vi.fn(),
+  liveVariants: vi.fn(),
   scope: vi.fn(),
 }));
 
@@ -22,13 +22,13 @@ vi.mock('@/lib/server/compute-worker/client', () => ({
 vi.mock('@/lib/server/audiobooks/request', () => ({ loadSavedPlayback: mocks.saved }));
 vi.mock('@/lib/server/reader/playback', () => ({ resolveDefaultPlaybackRequest: mocks.defaultRequest }));
 vi.mock('@/lib/server/tts/cloned-voices', () => ({ listClonedVoices: async () => [] }));
-vi.mock('@/lib/server/audiobooks/audiobooks', () => ({ audiobookNarrationRevisions: mocks.pinnedRevisions }));
+vi.mock('@/lib/server/audiobooks/audiobooks', () => ({ liveAudiobookVariants: mocks.liveVariants }));
 vi.mock('@/lib/server/tts/segments-auth', () => ({ resolveSegmentDocumentScope: mocks.scope }));
 
 import { buildTtsPlaybackPlanningInput, type ParsedTtsPlaybackRequestBody } from '@/lib/server/tts/playback-request';
 import { NextRequest } from 'next/server';
 import { listCachedVoices } from '@/lib/server/tts/cached-voices';
-import { resolveDocumentStorageScope } from '@/lib/server/tts/storage-scope';
+import { pinnedSettingsHashes, resolveDocumentStorageScope } from '@/lib/server/tts/storage-scope';
 import type { ResolvedSegmentDocumentScope } from '@/lib/server/tts/segments-auth';
 
 const DOCUMENT_ID = 'a'.repeat(64);
@@ -105,28 +105,49 @@ describe('PDF playback identity after Force reparse', () => {
     expect(mocks.readPlan).not.toHaveBeenCalledWith(foreign);
   });
 
-  test('storage keeps audio for the current settings on each layout a live audiobook is pinned to', async () => {
+  test('storage keeps only audio that the current settings on an earlier layout produced', async () => {
+    const otherVoice = { ...request().settings, voice: 'Kiki' };
     const legacy = await buildTtsPlaybackPlanningInput(request(), scope);
-    currentLayout(REVISION);
-    const reparsed = await buildTtsPlaybackPlanningInput(request(), scope);
+    const legacyOtherVoice = await buildTtsPlaybackPlanningInput(request({ settings: otherVoice }), scope);
     const older = await buildTtsPlaybackPlanningInput(request(), scope, { narrationRevision: 'e'.repeat(32) });
+    currentLayout(REVISION);
     mocks.scope.mockResolvedValue(scope);
     const body = { ...request(), planning: { skipBlockKinds: ['header', 'footer'] } };
-    const resolve = () => resolveDocumentStorageScope(new NextRequest('http://localhost/api/tts/storage/document', {
+    const resolved = await resolveDocumentStorageScope(new NextRequest('http://localhost/api/tts/storage/document', {
       method: 'POST', body: JSON.stringify(body),
     }));
+    if (resolved instanceof Response) throw new Error('scope did not resolve');
+    const missing = `${PLAN_PREFIX}${'3'.repeat(32)}.json`;
+    const exportOf = (settingsHash: string, planObjectKey: string, documentVersion = 7) => (
+      { documentVersion, settingsHash, planObjectKey, bytes: 100, objects: 2 });
+    mocks.liveVariants.mockResolvedValue([]);
 
-    mocks.pinnedRevisions.mockResolvedValue([null, REVISION, 'e'.repeat(32)]);
-    expect(await resolve()).toMatchObject({
-      settingsHash: reparsed.settingsHash,
-      pinnedSettingsHashes: [legacy.settingsHash, older.settingsHash],
-    });
-    mocks.pinnedRevisions.mockResolvedValue([REVISION]);
-    expect(await resolve()).toMatchObject({ settingsHash: reparsed.settingsHash, pinnedSettingsHashes: [] });
-    mocks.pinnedRevisions.mockClear();
-    mocks.scope.mockResolvedValue({ ...scope, readerType: 'epub' });
-    expect(await resolve()).toMatchObject({ pinnedSettingsHashes: [] });
-    expect(mocks.pinnedRevisions).not.toHaveBeenCalled();
+    // An export made with the current settings on the earlier layout keeps its
+    // audio even after its request was pruned. Another voice's export does not
+    // protect the current voice's old audio, and neither does an export whose
+    // plan is gone or one from an older document version.
+    expect(await pinnedSettingsHashes(resolved, [
+      exportOf(legacy.settingsHash, OLD_PLAN),
+      exportOf(legacyOtherVoice.settingsHash, OLD_PLAN),
+      exportOf(older.settingsHash, missing),
+      exportOf(legacy.settingsHash, OLD_PLAN, 6),
+      exportOf(resolved.settingsHash, NEW_PLAN),
+    ])).toEqual([legacy.settingsHash]);
+    expect(await pinnedSettingsHashes(resolved, [exportOf(legacyOtherVoice.settingsHash, OLD_PLAN)])).toEqual([]);
+
+    // A live request still preparing on an earlier layout keeps its audio when
+    // it uses the current settings.
+    mocks.liveVariants.mockResolvedValue([
+      { settingsHash: older.settingsHash, narrationRevision: 'e'.repeat(32) },
+      { settingsHash: legacyOtherVoice.settingsHash, narrationRevision: null },
+    ]);
+    expect(await pinnedSettingsHashes(resolved, [])).toEqual([older.settingsHash]);
+
+    mocks.liveVariants.mockClear();
+    expect(await pinnedSettingsHashes({ ...resolved, scope: { ...scope, readerType: 'epub' } }, [
+      exportOf(legacy.settingsHash, OLD_PLAN),
+    ])).toEqual([]);
+    expect(mocks.liveVariants).not.toHaveBeenCalled();
   });
 
   test('other readers never look up a PDF layout', async () => {

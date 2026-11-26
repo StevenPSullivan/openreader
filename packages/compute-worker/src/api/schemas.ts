@@ -271,6 +271,8 @@ export const userStorageUsageResponseSchema = z.object({
     exports: z.array(z.object({
       documentVersion: z.number().nullable(),
       settingsHash: z.string().nullable(),
+      /** The plan the export was built from, when its metadata names one. */
+      planObjectKey: z.string().optional(),
       bytes: z.number(),
       objects: z.number(),
     })),

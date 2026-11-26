@@ -5,18 +5,17 @@ import { db } from '@openreader/database';
 import { documents } from '@openreader/database/schema';
 import { buildTtsPlaybackPlanningInput, parseTtsPlaybackRequestBody } from '@/lib/server/tts/playback-request';
 import { resolveSegmentDocumentScope, type ResolvedSegmentDocumentScope } from '@/lib/server/tts/segments-auth';
-import { audiobookNarrationRevisions } from '@/lib/server/audiobooks/audiobooks';
+import { liveAudiobookVariants } from '@/lib/server/audiobooks/audiobooks';
+import { resolvePdfNarrationRevision } from '@/lib/server/tts/pdf-narration-revision';
+import type { ParsedTtsPlaybackRequestBody } from '@/lib/server/tts/playback-request';
 
 export type DocumentStorageScope = {
   documentId: string;
   scope: ResolvedSegmentDocumentScope;
   /** The cache identity the reader would request now for this document. */
   settingsHash: string;
-  /**
-   * Other identities of this version still in use: today's settings on the
-   * earlier PDF layouts that audiobook requests are pinned to.
-   */
-  pinnedSettingsHashes: string[];
+  /** The settings payload the identity was built from. */
+  parsed: ParsedTtsPlaybackRequestBody;
 };
 
 /**
@@ -32,16 +31,48 @@ export async function resolveDocumentStorageScope(
   const scope = await resolveSegmentDocumentScope(request, parsed.documentId);
   if (scope instanceof Response) return scope;
   const { settingsHash } = await buildTtsPlaybackPlanningInput(parsed, scope);
-  const pinnedSettingsHashes: string[] = [];
-  if (scope.readerType === 'pdf') {
-    for (const narrationRevision of await audiobookNarrationRevisions(scope, parsed.documentId)) {
-      const pinned = await buildTtsPlaybackPlanningInput(parsed, scope, { narrationRevision });
-      if (pinned.settingsHash !== settingsHash && !pinnedSettingsHashes.includes(pinned.settingsHash)) {
-        pinnedSettingsHashes.push(pinned.settingsHash);
-      }
-    }
+  return { documentId: parsed.documentId, scope, settingsHash, parsed };
+}
+
+/**
+ * Other cache identities of this version that are still in use after a Force
+ * reparse: audio made with the current settings on an earlier PDF layout,
+ * which an export or a live audiobook request was built from. An identity is
+ * kept only when the current settings on that layout produce exactly it, so
+ * audio for other voices or settings stays reclaimable. The storage screen and
+ * reclaim use the same set.
+ */
+export async function pinnedSettingsHashes(
+  resolved: DocumentStorageScope,
+  exports: ReadonlyArray<{ documentVersion: number | null; settingsHash: string | null; planObjectKey?: string }>,
+): Promise<string[]> {
+  const { scope, documentId, parsed } = resolved;
+  if (scope.readerType !== 'pdf') return [];
+  const candidates: Array<{ settingsHash: string; narrationRevision: string | null }> = [];
+  for (const row of exports) {
+    if (row.documentVersion !== scope.documentVersion || !row.settingsHash || !row.planObjectKey
+      || row.settingsHash === resolved.settingsHash) continue;
+    // A plan that is gone resolves to the current layout, which never matches.
+    candidates.push({
+      settingsHash: row.settingsHash,
+      narrationRevision: await resolvePdfNarrationRevision(documentId, scope, row.planObjectKey),
+    });
   }
-  return { documentId: parsed.documentId, scope, settingsHash, pinnedSettingsHashes };
+  for (const variant of await liveAudiobookVariants(scope, documentId)) {
+    if (variant.settingsHash !== resolved.settingsHash) candidates.push(variant);
+  }
+  const currentOn = new Map<string | null, string>();
+  const pinned: string[] = [];
+  for (const { settingsHash, narrationRevision } of candidates) {
+    if (pinned.includes(settingsHash)) continue;
+    let current = currentOn.get(narrationRevision);
+    if (current === undefined) {
+      current = (await buildTtsPlaybackPlanningInput(parsed, scope, { narrationRevision })).settingsHash;
+      currentOn.set(narrationRevision, current);
+    }
+    if (current === settingsHash) pinned.push(settingsHash);
+  }
+  return pinned;
 }
 
 export async function listOwnedDocumentIds(userId: string): Promise<Set<string>> {

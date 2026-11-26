@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getComputeWorkerClient, isComputeWorkerAvailable } from '@/lib/server/compute-worker/client';
 import { createRequestLogger } from '@/lib/server/logger';
 import { errorResponse } from '@/lib/server/errors/next-response';
-import { resolveDocumentStorageScope } from '@/lib/server/tts/storage-scope';
+import { pinnedSettingsHashes, resolveDocumentStorageScope } from '@/lib/server/tts/storage-scope';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -21,15 +21,27 @@ export async function POST(request: NextRequest) {
     if (!isComputeWorkerAvailable()) {
       return NextResponse.json({ error: 'Compute worker is required to reclaim audio.' }, { status: 503 });
     }
-    const result = await getComputeWorkerClient().reclaimTtsPlaybackCache({
+    const client = getComputeWorkerClient();
+    const signal = AbortSignal.timeout(50_000);
+    // Keep exactly what the storage screen reports as current.
+    const pinned = resolved.scope.readerType === 'pdf'
+      ? await pinnedSettingsHashes(resolved, (await client.getUserStorageUsage({
+        storageUserId: resolved.scope.storageUserId,
+        includePlayback: true,
+        documentId: resolved.documentId,
+        derivedDocumentIds: [],
+        namespace: null,
+      }, { signal })).documents.find((row) => row.documentId === resolved.documentId)?.exports ?? [])
+      : [];
+    const result = await client.reclaimTtsPlaybackCache({
       storageUserId: resolved.scope.storageUserId,
       documentId: resolved.documentId,
       keep: {
         documentVersion: resolved.scope.documentVersion,
         settingsHash: resolved.settingsHash,
-        ...(resolved.pinnedSettingsHashes.length ? { settingsHashes: resolved.pinnedSettingsHashes } : {}),
+        ...(pinned.length ? { settingsHashes: pinned } : {}),
       },
-    }, { signal: AbortSignal.timeout(45_000) });
+    }, { signal });
     return NextResponse.json(result);
   } catch (error) {
     return errorResponse(error, {

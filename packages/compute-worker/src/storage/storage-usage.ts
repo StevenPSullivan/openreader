@@ -23,6 +23,8 @@ export type PlaybackExportUsage = {
   /** Null when metadata was not read (library scans) or is unreadable. */
   documentVersion: number | null;
   settingsHash: string | null;
+  /** The plan the export was built from, read with its metadata. */
+  planObjectKey?: string;
   bytes: number;
   objects: number;
 };
@@ -155,6 +157,7 @@ export async function collectStorageUsage(input: {
         const documentVersion = Number(metadata?.documentVersion);
         if (Number.isSafeInteger(documentVersion)) row.documentVersion = documentVersion;
         if (typeof metadata?.settingsHash === 'string' && metadata.settingsHash) row.settingsHash = metadata.settingsHash;
+        if (typeof metadata?.planObjectKey === 'string' && metadata.planObjectKey) row.planObjectKey = metadata.planObjectKey;
       }));
     }
   }
