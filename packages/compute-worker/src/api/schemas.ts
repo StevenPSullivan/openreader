@@ -36,6 +36,7 @@ export const parsedPdfDocumentSchema = z.object({
   documentId: z.string(),
   parserVersion: z.string(),
   parsedAt: z.number(),
+  narrationRevision: z.string().optional(),
   pages: z.array(parsedPdfPageSchema),
 });
 
@@ -132,6 +133,7 @@ export const ttsPlaybackPlanningSchema = z.object({
   documentSource: z.object({
     namespace: z.string().trim().min(1).max(128).nullable(),
     skipBlockKinds: z.array(z.string().trim().min(1).max(64)).max(64).optional(),
+    narrationRevision: z.string().regex(/^[a-f0-9]{8,64}$/).optional(),
     extent: z.enum(['section', 'document']),
     isPlainText: z.boolean().optional(),
   }).strict().optional(),
@@ -576,7 +578,9 @@ export const modelStatusSchema = z.object({
 export const modelCancelResultSchema = z.object({ cancelled: z.boolean() });
 
 export const pdfLayoutResolutionSchema = z.object({
-  artifact: artifactReferenceSchema.nullable(),
+  artifact: artifactReferenceSchema.extend({
+    narrationRevision: z.string().optional(),
+  }).nullable(),
   operation: computeOperationSchema.nullable(),
 });
 

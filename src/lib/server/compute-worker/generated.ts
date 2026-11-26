@@ -247,6 +247,7 @@ export interface paths {
                             documentSource?: {
                                 namespace: string | null;
                                 skipBlockKinds?: string[];
+                                narrationRevision?: string;
                                 /** @enum {string} */
                                 extent: "section" | "document";
                                 isPlainText?: boolean;
@@ -2101,6 +2102,7 @@ export interface paths {
                             documentSource?: {
                                 namespace: string | null;
                                 skipBlockKinds?: string[];
+                                narrationRevision?: string;
                                 /** @enum {string} */
                                 extent: "section" | "document";
                                 isPlainText?: boolean;
@@ -2315,6 +2317,7 @@ export interface paths {
                             documentSource?: {
                                 namespace: string | null;
                                 skipBlockKinds?: string[];
+                                narrationRevision?: string;
                                 /** @enum {string} */
                                 extent: "section" | "document";
                                 isPlainText?: boolean;
@@ -2519,6 +2522,7 @@ export interface paths {
                             documentSource?: {
                                 namespace: string | null;
                                 skipBlockKinds?: string[];
+                                narrationRevision?: string;
                                 /** @enum {string} */
                                 extent: "section" | "document";
                                 isPlainText?: boolean;
@@ -4659,6 +4663,7 @@ export interface paths {
                         "application/json": {
                             artifact: {
                                 objectKey: string;
+                                narrationRevision?: string;
                             } | null;
                             operation: {
                                 opId: string;
@@ -5514,6 +5519,7 @@ export interface components {
             documentId: string;
             parserVersion: string;
             parsedAt: number;
+            narrationRevision?: string;
             pages: {
                 pageNumber: number;
                 width: number;
@@ -5948,6 +5954,7 @@ export interface components {
         PdfLayoutResolution: {
             artifact: {
                 objectKey: string;
+                narrationRevision?: string;
             } | null;
             operation: {
                 opId: string;

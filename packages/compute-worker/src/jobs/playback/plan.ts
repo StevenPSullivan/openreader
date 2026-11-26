@@ -154,6 +154,11 @@ async function derivePdfSourceUnits(
   });
   const raw = await storage.readObject(artifactKey);
   const parsed = JSON.parse(Buffer.from(raw).toString('utf8')) as ParsedPdfDocument;
+  // A plan is keyed by the narration revision it was requested for. Planning a
+  // replaced layout under that key would pair its blocks with another layout.
+  if ((parsed.narrationRevision ?? null) !== (documentSource.narrationRevision ?? null)) {
+    throw new Error('The PDF layout changed while its reading plan was being prepared. Reopen the document.');
+  }
   const pages = [...(parsed.pages ?? [])].sort((a, b) => a.pageNumber - b.pageNumber);
   const units: CanonicalTtsSourceUnit[] = [];
   for (const page of pages) {
@@ -224,6 +229,7 @@ export function computePlaybackPlanSignature(request: TtsPlaybackPlanCapableRequ
       documentSource?.namespace ?? null,
       request.storageUserId,
     ]),
+    narrationRevision: documentSource?.narrationRevision ?? null,
   });
 }
 
@@ -242,6 +248,9 @@ async function persistTtsPlaybackPlan(input: {
     readerType: input.request.readerType,
     settingsHash: input.request.settingsHash,
     settingsJson: input.request.settingsJson,
+    ...(input.request.planning.documentSource?.narrationRevision
+      ? { narrationRevision: input.request.planning.documentSource.narrationRevision }
+      : {}),
     segments: input.segments.map((segment) => ({
       ordinal: segment.ordinal,
       segmentKey: segment.segmentKey ?? null,
