@@ -129,6 +129,12 @@ export function ttsPlaybackSettingsIdentity(settingsHash: string): string {
   return end === -1 ? settingsHash : settingsHash.slice(0, end);
 }
 
+/** The PDF layout revision a playback settings hash was made for, or null when it has none. */
+export function ttsPlaybackSettingsRevision(settingsHash: string): string | null {
+  const end = settingsHash.indexOf(NARRATION_REVISION_SEPARATOR);
+  return end === -1 ? null : settingsHash.slice(end + 1);
+}
+
 export function buildTtsSegmentSettingsJson(settings: TTSSegmentSettings): TTSSegmentSettings | string {
   const modelOptions = settings.providerType === 'openrouter' ? normalizeOpenRouterOptions(settings.ttsModelOptions, settings.ttsModel) : '';
   const speechText = normalizeSpeechText(settings.speechText);

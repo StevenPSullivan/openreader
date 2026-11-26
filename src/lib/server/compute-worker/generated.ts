@@ -764,6 +764,7 @@ export interface paths {
                         storageUserId: string;
                         documentId: string;
                         documentVersion: number;
+                        narrationRevision?: string | null;
                     };
                 };
             };

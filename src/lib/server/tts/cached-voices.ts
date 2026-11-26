@@ -18,16 +18,17 @@ type CachedSettings = { providerRef?: unknown; ttsModel?: unknown; voice?: unkno
  */
 export async function listCachedVoices(caller: AudiobookCaller, documentId: string): Promise<CachedVoiceResource[] | Response> {
   const { scope } = caller;
+  // Every variant is compared against today's request, which uses the current layout.
+  const narrationRevision = scope.readerType === 'pdf' ? await resolvePdfNarrationRevision(documentId, scope) : null;
   const variants = await new ComputeWorkerClient().listTtsPlaybackCachedVariants({
     storageUserId: scope.storageUserId,
     documentId,
     documentVersion: scope.documentVersion,
+    ...(scope.readerType === 'pdf' ? { narrationRevision } : {}),
   });
   if (variants.length === 0) return [];
   const saved = await loadSavedPlayback(caller, documentId, { observeOnly: true });
   if (saved instanceof Response) return saved;
-  // Every variant is compared against today's request, which uses the current layout.
-  const narrationRevision = scope.readerType === 'pdf' ? await resolvePdfNarrationRevision(documentId, scope) : null;
   const clones = variants.some(({ settingsJson }) => String((settingsJson as CachedSettings).voice).startsWith('clone:'))
     ? await listClonedVoices(scope.userId) : [];
 

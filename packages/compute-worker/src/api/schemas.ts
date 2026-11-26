@@ -619,6 +619,8 @@ export const ttsPlaybackCachedVariantsRequestSchema = z.object({
   storageUserId: z.string().trim().min(1).max(256),
   documentId: documentIdSchema,
   documentVersion: z.number().int().nonnegative(),
+  /** Lists only audio for this PDF layout revision; null lists audio for a layout without one. */
+  narrationRevision: z.string().regex(/^[a-f0-9]{8,64}$/).nullable().optional(),
 }).strict();
 
 export const ttsPlaybackCachedVariantsSchema = z.object({

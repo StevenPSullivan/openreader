@@ -150,5 +150,7 @@ describe('PDF playback identity after Force reparse', () => {
     expect(await listCachedVoices(caller, DOCUMENT_ID)).toMatchObject([{ voice: 'Luna', segments: 1 }]);
     currentLayout();
     expect(await listCachedVoices(caller, DOCUMENT_ID)).toMatchObject([{ voice: 'Luna', segments: 3 }]);
+    // The worker is asked for the current layout's audio only, before it limits the list.
+    expect(mocks.variants.mock.calls.map(([input]) => input.narrationRevision)).toEqual([REVISION, null]);
   });
 });
