@@ -10,6 +10,11 @@ export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 export const maxDuration = 60;
 
+// Deletions stop by this point; the worker then answers within the timeout,
+// which leaves the route time to respond before `maxDuration`.
+const RECLAIM_DELETE_WINDOW_MS = 35_000;
+const RECLAIM_WORKER_TIMEOUT_MS = 55_000;
+
 /**
  * Reclaim a document's audio generated with other settings or older document
  * versions. The current cache identity, its sessions, and the shared reading
@@ -24,7 +29,10 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Compute worker is required to reclaim audio.' }, { status: 503 });
     }
     const client = getComputeWorkerClient();
-    const signal = AbortSignal.timeout(50_000);
+    // The worker starts no deletion after `notAfter` and answers once any batch
+    // in flight is done, well before the request is abandoned.
+    const notAfter = Date.now() + RECLAIM_DELETE_WINDOW_MS;
+    const signal = AbortSignal.timeout(RECLAIM_WORKER_TIMEOUT_MS);
     // A PDF that a reparse changed can have audiobooks on an earlier layout.
     const pinsEarlierLayouts = resolved.scope.readerType === 'pdf' && resolved.narrationRevision !== null;
     const reclaim = async () => {
@@ -54,11 +62,14 @@ export async function POST(request: NextRequest) {
             settingsHash: resolved.settingsHash,
             ...(pinned.length ? { settingsHashes: pinned } : {}),
           },
+        notAfter,
       }, { signal });
     };
-    // No audiobook may start between choosing what to keep and deleting the
-    // rest, or its new file could be deleted under an earlier layout's hash.
-    const result = pinsEarlierLayouts
+    // No audiobook may start between choosing what to keep and the worker's
+    // last deletion, or its new file could be deleted under an earlier
+    // layout's hash. Every PDF takes the lock, because a reparse can publish
+    // a revision while reclaim runs.
+    const result = resolved.scope.readerType === 'pdf'
       ? await withDocumentAudiobookLock(resolved.scope, resolved.documentId, reclaim)
       : await reclaim();
     return NextResponse.json(result);

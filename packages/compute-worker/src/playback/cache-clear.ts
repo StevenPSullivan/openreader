@@ -19,8 +19,10 @@ export async function clearTtsPlaybackArtifacts(input: {
   storage: ArtifactStorage;
   s3Prefix: string;
   scope: TtsPlaybackCacheClearScope;
+  /** Checked before each deletion batch; a true result stops the clear. */
+  shouldStop?: () => boolean;
 }): Promise<TtsPlaybackCacheClearResult> {
-  const { storage, s3Prefix, scope } = input;
+  const { storage, s3Prefix, scope, shouldStop } = input;
   const version = typeof scope.documentVersion === 'number' && Number.isFinite(scope.documentVersion)
     ? Math.max(0, Math.floor(scope.documentVersion))
     : null;
@@ -44,9 +46,9 @@ export async function clearTtsPlaybackArtifacts(input: {
         : `${s3Prefix}/tts_playback_plan_v1/${scope.documentId}/${version}/`;
 
   const [deletedAudioObjects, deletedSidecarObjects, deletedPlanObjects] = await Promise.all([
-    deletePrefix(storage, audioPrefix),
-    deletePrefix(storage, sidecarPrefix),
-    planPrefix === null ? 0 : deletePrefix(storage, planPrefix),
+    deletePrefix(storage, audioPrefix, shouldStop),
+    deletePrefix(storage, sidecarPrefix, shouldStop),
+    planPrefix === null ? 0 : deletePrefix(storage, planPrefix, shouldStop),
   ]);
 
   // Export artifacts are user/document-scoped, so the whole scope prefix can
@@ -58,7 +60,7 @@ export async function clearTtsPlaybackArtifacts(input: {
   });
   let deletedExportObjects: number;
   if (version === null) {
-    deletedExportObjects = await deletePrefix(storage, exportScopePrefix);
+    deletedExportObjects = await deletePrefix(storage, exportScopePrefix, shouldStop);
   } else {
     const exportPrefixes = await findExportArtifactPrefixesByMetadata({
       storage,
@@ -67,7 +69,7 @@ export async function clearTtsPlaybackArtifacts(input: {
         && (settingsHash === null || metadata.settingsHash === settingsHash),
     });
     deletedExportObjects = (await Promise.all(
-      exportPrefixes.map((prefix) => deletePrefix(storage, prefix)),
+      exportPrefixes.map((prefix) => deletePrefix(storage, prefix, shouldStop)),
     )).reduce((total, count) => total + count, 0);
   }
 

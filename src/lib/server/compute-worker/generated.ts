@@ -1180,6 +1180,7 @@ export interface paths {
                             settingsHash?: string;
                             settingsHashes?: string[];
                         } | null;
+                        notAfter?: number;
                     };
                 };
             };
@@ -1197,6 +1198,7 @@ export interface paths {
                             deletedExportObjects: number;
                             invalidatedPlaybackSessions: number;
                             invalidatedJobOperations: number;
+                            stoppedEarly?: boolean;
                         };
                     };
                 };

@@ -149,6 +149,7 @@ describe('storage routes', () => {
       storageUserId: 'user-1',
       documentId: 'doc-1',
       keep: { documentVersion: 3, settingsHash: 'current-hash' },
+      notAfter: expect.any(Number),
     }, expect.anything());
   });
 
@@ -176,6 +177,7 @@ describe('storage routes', () => {
       storageUserId: 'user-1',
       documentId: 'doc-1',
       keep: { documentVersion: 3, settingsHash: 'current-hash', settingsHashes: ['pinned-hash'] },
+      notAfter: expect.any(Number),
     }, expect.anything());
     // Both requests judged the same report.
     expect(mocks.pinned.mock.calls.map((call) => call[1])).toEqual([
@@ -220,6 +222,7 @@ describe('storage routes', () => {
       storageUserId: 'user-1',
       documentId: 'doc-1',
       keep: { documentVersion: 3 },
+      notAfter: expect.any(Number),
     }, expect.anything());
   });
 

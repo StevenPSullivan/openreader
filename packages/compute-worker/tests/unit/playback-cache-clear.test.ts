@@ -47,6 +47,35 @@ class MemoryStorage implements ArtifactStorage {
 }
 
 describe('playback cache clear', () => {
+  test('a stopped clear finishes the batch in flight and starts no other', async () => {
+    const storage = new MemoryStorage();
+    const prefix = 'openreader-test';
+    const documentId = 'a'.repeat(64);
+    const audio = `${prefix}/tts_playback_segments_audio_v1/users/user-1/docs/${documentId}/3/old/`;
+    for (let index = 0; index < 70; index += 1) await storage.putObject(`${audio}${String(index).padStart(3, '0')}.mp3`, Buffer.from('a'));
+    // The deadline passes while the first batch is being deleted.
+    let deadlinePassed = false;
+    let inFlight = 0;
+    let finishedWhileStopped = 0;
+    const deleteObject = storage.deleteObject.bind(storage);
+    storage.deleteObject = async (key: string) => {
+      inFlight += 1;
+      deadlinePassed = true;
+      await new Promise((resolve) => setTimeout(resolve, 5));
+      await deleteObject(key);
+      inFlight -= 1;
+      if (deadlinePassed) finishedWhileStopped += 1;
+    };
+    await expect(clearTtsPlaybackArtifacts({
+      storage, s3Prefix: prefix, shouldStop: () => deadlinePassed,
+      scope: { storageUserId: 'user-1', documentId, documentVersion: 3, settingsHash: 'old', namespace: null },
+    })).rejects.toThrow('stopped');
+    // The clear returned only after its in-flight batch, one batch of 32, was done.
+    expect(inFlight).toBe(0);
+    expect(finishedWhileStopped).toBe(32);
+    expect([...storage.objects.keys()].filter((key) => key.startsWith(audio))).toHaveLength(70 - 32);
+  });
+
   test('deletes only the requested playback scope and matching export artifacts', async () => {
     const storage = new MemoryStorage();
     const prefix = 'openreader-test';

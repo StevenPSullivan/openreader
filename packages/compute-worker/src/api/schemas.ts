@@ -239,6 +239,11 @@ export const ttsPlaybackCacheReclaimSchema = z.object({
     settingsHash: z.string().trim().min(1).max(256).optional(),
     settingsHashes: z.array(z.string().trim().min(1).max(256)).max(64).optional(),
   }).strict().nullable(),
+  /**
+   * Epoch milliseconds after which no further deletion batch starts, so the
+   * caller can wait for the response and know nothing is still being deleted.
+   */
+  notAfter: z.number().int().positive().optional(),
 }).strict();
 
 export const ttsPlaybackCacheReclaimResponseSchema = z.object({
@@ -248,6 +253,8 @@ export const ttsPlaybackCacheReclaimResponseSchema = z.object({
   deletedExportObjects: z.number(),
   invalidatedPlaybackSessions: z.number(),
   invalidatedJobOperations: z.number(),
+  /** Set when `notAfter` passed before every unused variant was deleted. */
+  stoppedEarly: z.boolean().optional(),
 });
 
 export const userStorageUsageSchema = z.object({

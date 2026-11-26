@@ -70,7 +70,7 @@ export function registerCleanupRoutes(
     playbackStorage: TtsPlaybackStorage,
     requestId: string,
     scope: TtsPlaybackResetScope,
-    options: { namespace: string | null; readerType?: 'pdf' | 'epub' | 'html' },
+    options: { namespace: string | null; readerType?: 'pdf' | 'epub' | 'html'; shouldStop?: () => boolean },
   ) => {
     const now = Date.now();
     const timed = async <T>(phase: string, run: () => Promise<T>): Promise<T> => {
@@ -93,6 +93,7 @@ export function registerCleanupRoutes(
       storage,
       s3Prefix,
       scope: { ...scope, namespace: options.namespace, ...(options.readerType ? { readerType: options.readerType } : {}) },
+      ...(options.shouldStop ? { shouldStop: options.shouldStop } : {}),
     }));
     app.log.info({ requestId, durationMs: Date.now() - now, ...deleted,
       invalidatedPlaybackSessions, invalidatedJobOperations }, 'tts.playback.cache_clear_completed');
@@ -167,7 +168,8 @@ export function registerCleanupRoutes(
       reply.code(503);
       return { error: 'TTS playback storage is unavailable' };
     }
-    const { storageUserId, documentId, keep } = parsed.data;
+    const { storageUserId, documentId, keep, notAfter } = parsed.data;
+    const pastDeadline = notAfter === undefined ? undefined : () => Date.now() >= notAfter;
     const usage = await collectStorageUsage({
       storage,
       s3Prefix,
@@ -176,7 +178,15 @@ export function registerCleanupRoutes(
       attributeExports: true,
     });
     const variants = reclaimableVariants(usage.documents[0], keep);
-    const totals = {
+    const totals: {
+      reclaimedVariants: number;
+      deletedAudioObjects: number;
+      deletedSidecarObjects: number;
+      deletedExportObjects: number;
+      invalidatedPlaybackSessions: number;
+      invalidatedJobOperations: number;
+      stoppedEarly?: boolean;
+    } = {
       reclaimedVariants: 0,
       deletedAudioObjects: 0,
       deletedSidecarObjects: 0,
@@ -189,12 +199,25 @@ export function registerCleanupRoutes(
     // scoped to its version + settings hash so the kept variant and the shared
     // plan are untouched.
     for (const variant of variants) {
-      const result = await resetPlaybackScope(playbackStorage, request.id, {
-        storageUserId,
-        documentId,
-        documentVersion: variant.documentVersion,
-        settingsHash: variant.settingsHash,
-      }, { namespace: null });
+      // Past the caller's deadline nothing more is deleted, and the response
+      // is sent only after any batch already in flight has finished.
+      if (pastDeadline?.()) {
+        totals.stoppedEarly = true;
+        break;
+      }
+      let result;
+      try {
+        result = await resetPlaybackScope(playbackStorage, request.id, {
+          storageUserId,
+          documentId,
+          documentVersion: variant.documentVersion,
+          settingsHash: variant.settingsHash,
+        }, { namespace: null, ...(pastDeadline ? { shouldStop: pastDeadline } : {}) });
+      } catch (error) {
+        if (!pastDeadline?.()) throw error;
+        totals.stoppedEarly = true;
+        break;
+      }
       totals.reclaimedVariants += 1;
       totals.deletedAudioObjects += result.deletedAudioObjects;
       totals.deletedSidecarObjects += result.deletedSidecarObjects;
