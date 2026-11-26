@@ -948,6 +948,27 @@ describe('/api/v1/documents/[id]/audiobooks', () => {
       expect(revisionsUsed()).toEqual([null]);
     });
 
+    test('a new request waits while reclaim holds the document lock', async () => {
+      const { withDocumentAudiobookLock } = await import('@/lib/server/audiobooks/audiobooks');
+      hoisted.plan.mockResolvedValue({ opId: 'plan-op', status: 'running' });
+      hoisted.resolveSession.mockResolvedValue({ session: null, operation: null, progress: null });
+      const scope = { userId: 'user-1', storageUserId: 'user-1', documentVersion: 1, readerType: 'html' } as never;
+      let release!: () => void;
+      let reclaiming = false;
+      const held = withDocumentAudiobookLock(scope, 'doc-1', async () => {
+        reclaiming = true;
+        await new Promise<void>((resolve) => { release = resolve; });
+      });
+      await vi.waitFor(() => expect(reclaiming).toBe(true));
+      const started = start({ planObjectKey: undefined });
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      expect(hoisted.rows).toHaveLength(0);
+      release();
+      await held;
+      expect((await started).status).toBeLessThan(300);
+      expect(hoisted.rows).toHaveLength(1);
+    });
+
     test('a live request protects storage only while its settings still give its ID', async () => {
       const { liveAudiobookVariants } = await import('@/lib/server/audiobooks/audiobooks');
       hoisted.readerType.value = 'pdf';

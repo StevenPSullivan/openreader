@@ -98,7 +98,11 @@ const audiobookLocks = (globalThis as typeof globalThis & {
   audiobookLocks?: Map<string, Promise<void>>;
 }).audiobookLocks ??= new Map<string, Promise<void>>();
 
-async function withAudiobookLock<T>(caller: AudiobookCaller, documentId: string, run: () => Promise<T>): Promise<T> {
+async function withAudiobookLock<T>(
+  caller: { scope: Pick<ResolvedSegmentDocumentScope, 'storageUserId'> },
+  documentId: string,
+  run: () => Promise<T>,
+): Promise<T> {
   const key = JSON.stringify([caller.scope.storageUserId, documentId]);
   if (process.env.POSTGRES_URL) {
     try {
@@ -119,6 +123,18 @@ async function withAudiobookLock<T>(caller: AudiobookCaller, documentId: string,
     release();
     if (audiobookLocks.get(key) === tail) audiobookLocks.delete(key);
   }
+}
+
+/**
+ * Runs `run` while no audiobook command for this document is in progress, so
+ * work that decides which audio is in use cannot race a new request.
+ */
+export function withDocumentAudiobookLock<T>(
+  scope: ResolvedSegmentDocumentScope,
+  documentId: string,
+  run: () => Promise<T>,
+): Promise<T> {
+  return withAudiobookLock({ scope }, documentId, run);
 }
 
 function audiobookId(scope: ResolvedSegmentDocumentScope, intent: AudiobookIntent, settingsHash: string): string {

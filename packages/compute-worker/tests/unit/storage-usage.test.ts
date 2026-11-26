@@ -122,16 +122,20 @@ describe('storage usage', () => {
     expect(report.exportsComplete).toBe(true);
   });
 
-  test('lists exports before audio so a full audio cache cannot hide them', async () => {
+  test('lists attributed exports on a budget of their own', async () => {
     const storage = new MemoryStorage(1);
     await seed(storage);
-    // The budget covers the export's two objects and nothing else.
-    const report = await collectStorageUsage({
-      storage, s3Prefix: prefix, storageUserId: user, documentId: docA, attributeExports: true, maxObjects: 2,
+    // A budget the audio alone exceeds still lists the export in full, and
+    // finds the same audio variants a scan without attribution finds.
+    const scan = (attributeExports: boolean) => collectStorageUsage({
+      storage, s3Prefix: prefix, storageUserId: user, documentId: docA, attributeExports, maxObjects: 2,
     });
+    const report = await scan(true);
     expect(report.truncated).toBe(true);
     expect(report.exportsComplete).toBe(true);
     expect(report.documents[0]?.exports).toEqual([expect.objectContaining({ settingsHash: 'othervoice', objects: 2 })]);
+    expect(report.documents[0]?.variants).toEqual((await scan(false)).documents[0]?.variants);
+    expect(report.documents[0]?.variants.length).toBeGreaterThan(0);
 
     const tooSmall = await collectStorageUsage({
       storage, s3Prefix: prefix, storageUserId: user, documentId: docA, attributeExports: true, maxObjects: 1,

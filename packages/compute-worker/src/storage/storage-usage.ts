@@ -100,17 +100,20 @@ export async function collectStorageUsage(input: {
     return usage;
   };
 
-  let scannedObjects = 0;
-  let truncated = false;
-  const scan = async (prefix: string, visit: (relativeKey: string, size: number) => void) => {
-    if (truncated) return;
+  type ScanBudget = { scanned: number; exhausted: boolean };
+  const budget: ScanBudget = { scanned: 0, exhausted: false };
+  // Attributed exports are listed with a budget of their own, so attribution
+  // never takes objects from audio, sidecar or derived discovery.
+  const exportBudget: ScanBudget = { scanned: 0, exhausted: false };
+  const scan = async (prefix: string, visit: (relativeKey: string, size: number) => void, limit = budget) => {
+    if (limit.exhausted) return;
     for await (const page of storage.listPrefixPages(prefix)) {
       for (const object of page) {
-        if (scannedObjects >= maxObjects) {
-          truncated = true;
+        if (limit.scanned >= maxObjects) {
+          limit.exhausted = true;
           return;
         }
-        scannedObjects += 1;
+        limit.scanned += 1;
         if (object.key.startsWith(prefix)) visit(object.key.slice(prefix.length), object.size);
       }
     }
@@ -136,7 +139,7 @@ export async function collectStorageUsage(input: {
     const audioRoot = `${s3Prefix}/tts_playback_segments_audio_v1/users/${encodeURIComponent(storageUserId)}/docs/`;
     const sidecarRoot = `${s3Prefix}/tts_playback_segments_v1/users/${storageUserHash(storageUserId)}/docs/`;
     const exportRoot = `${ttsPlaybackExportArtifactScopePrefix({ storageUserId, prefix: s3Prefix })}docs/`;
-    const scanExports = () => scan(`${exportRoot}${documentSegment}`, (key, size) => {
+    const scanExports = (limit: ScanBudget) => scan(`${exportRoot}${documentSegment}`, (key, size) => {
       const [documentId, artifactId, file] = `${documentSegment}${key}`.split('/');
       if (!documentId || !DOCUMENT_ID_REGEX.test(documentId) || !artifactId || !file) return;
       const exports = documentUsage(documentId).exports;
@@ -146,16 +149,16 @@ export async function collectStorageUsage(input: {
       usage.objects += 1;
       if (file === 'metadata.json') usage.metadataKey = `${exportRoot}${documentId}/${artifactId}/metadata.json`;
       exports.set(artifactId, usage);
-    });
-    // Attribution decides what reclaim may delete, so exports come first and a
-    // large audio cache cannot use up the budget before they are listed.
+    }, limit);
+    // Attribution decides what reclaim may delete, so a large audio cache must
+    // not hide an export.
     if (input.attributeExports) {
-      await scanExports();
-      exportsComplete = !truncated;
+      await scanExports(exportBudget);
+      exportsComplete = !exportBudget.exhausted;
     }
     await scan(`${audioRoot}${documentSegment}`, (key, size) => addVariant(`${documentSegment}${key}`, size));
     await scan(`${sidecarRoot}${documentSegment}`, (key, size) => addVariant(`${documentSegment}${key}`, size));
-    if (!input.attributeExports) await scanExports();
+    if (!input.attributeExports) await scanExports(budget);
   }
 
   if (input.attributeExports) {
@@ -187,7 +190,7 @@ export async function collectStorageUsage(input: {
     });
   // Derived prefixes are small, so batch the list calls instead of paying one
   // object-store round trip per prefix sequentially.
-  for (let index = 0; index < derivedPrefixes.length && !truncated; index += DERIVED_SCAN_CONCURRENCY) {
+  for (let index = 0; index < derivedPrefixes.length && !budget.exhausted; index += DERIVED_SCAN_CONCURRENCY) {
     await Promise.all(derivedPrefixes.slice(index, index + DERIVED_SCAN_CONCURRENCY).map(({ documentId, prefix }) => {
       const usage = documentUsage(documentId);
       return scan(prefix, (_key, size) => {
@@ -208,8 +211,8 @@ export async function collectStorageUsage(input: {
         derivedObjects: usage.derivedObjects,
       }))
       .sort((a, b) => a.documentId.localeCompare(b.documentId)),
-    scannedObjects,
-    truncated,
+    scannedObjects: budget.scanned + exportBudget.scanned,
+    truncated: budget.exhausted || exportBudget.exhausted,
     ...(input.attributeExports ? { exportsComplete } : {}),
   };
 }

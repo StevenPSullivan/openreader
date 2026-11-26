@@ -10,6 +10,7 @@ const mocks = vi.hoisted(() => ({
   workerAvailable: true,
   authorized: true,
   pinned: vi.fn(),
+  lock: vi.fn(),
 }));
 
 vi.mock('@/lib/server/admin/settings', () => ({ getRuntimeConfig: async () => ({}) }));
@@ -48,6 +49,7 @@ vi.mock('@/lib/server/tts/storage-scope', () => ({
   listOwnedDocumentIds: async () => new Set(mocks.owned),
   filterOwnedDocumentIds: async (_userId: string, ids: string[]) => new Set(ids.filter((id) => mocks.owned.has(id))),
 }));
+vi.mock('@/lib/server/audiobooks/audiobooks', () => ({ withDocumentAudiobookLock: mocks.lock }));
 vi.mock('@/lib/server/logger', () => ({
   createRequestLogger: () => ({ logger: { warn: vi.fn(), error: vi.fn(), info: vi.fn() } }),
 }));
@@ -79,6 +81,8 @@ describe('storage routes', () => {
     mocks.reclaim.mockResolvedValue(reclaimResult);
     mocks.pinned.mockReset();
     mocks.pinned.mockResolvedValue([]);
+    mocks.lock.mockReset();
+    mocks.lock.mockImplementation((_scope: unknown, _documentId: string, run: () => Promise<unknown>) => run());
     mocks.usage.mockResolvedValue({ documents: [], scannedObjects: 0, truncated: false });
   });
 
@@ -177,6 +181,20 @@ describe('storage routes', () => {
     expect(mocks.pinned.mock.calls.map((call) => call[1])).toEqual([
       { exportsComplete: true, exports: [pinnedExport] }, { exportsComplete: true, exports: [pinnedExport] },
     ]);
+  });
+
+  test('reclaims a reparsed PDF while holding its audiobook lock', async () => {
+    const response = await documentReclaim(post('/api/tts/storage/document/reclaim', { documentId: 'doc-1' }));
+    expect(response.status).toBe(200);
+    expect(mocks.lock).toHaveBeenCalledWith(expect.objectContaining({ storageUserId: 'user-1' }), 'doc-1', expect.any(Function));
+
+    // Another audiobook command still running on Postgres asks the caller to retry.
+    const { ApiRequestError } = await import('@/lib/server/api/responses');
+    mocks.lock.mockRejectedValueOnce(new ApiRequestError(503, 'AUDIOBOOK_BUSY', 'Another request for this audiobook is still running.', 5_000));
+    const busy = await documentReclaim(post('/api/tts/storage/document/reclaim', { documentId: 'doc-1' }));
+    expect(busy.status).toBe(503);
+    expect(busy.headers.get('Retry-After')).toBe('5');
+    expect((await busy.json()).code).toBe('AUDIOBOOK_BUSY');
   });
 
   test('keeps and reports the whole current version when the report is incomplete', async () => {
