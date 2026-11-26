@@ -968,6 +968,53 @@ describe('/api/v1/documents/[id]/audiobooks', () => {
         generation: { issue: { code: 'PDF_LAYOUT_CHANGED', message: expect.stringContaining('Request the audiobook again') } },
       });
     });
+
+    test('a read-only view of a pending PDF request with no plan operation reports a replaced layout', async () => {
+      hoisted.readerType.value = 'pdf';
+      hoisted.narrationRevision.mockResolvedValue('a'.repeat(32));
+      hoisted.plan.mockResolvedValueOnce({ opId: 'plan-op', status: 'running' });
+      hoisted.resolveSession.mockResolvedValue({ session: null, operation: null, progress: null });
+      const { json } = await start({ planObjectKey: undefined });
+      hoisted.scopes.value = ['documents:read'];
+
+      // Its plan operation is gone; on the same layout it has simply not started.
+      expect((await get(json.id)).json).toMatchObject({ status: 'idle', generation: { issue: null } });
+      hoisted.narrationRevision.mockResolvedValue('b'.repeat(32));
+      expect((await get(json.id)).json).toMatchObject({
+        status: 'failed',
+        generation: { issue: { code: 'PDF_LAYOUT_CHANGED', message: expect.stringContaining('Request the audiobook again') } },
+      });
+    });
+
+    test('a PDF request whose saved plan was cleared asks to be requested again once its layout was replaced', async () => {
+      hoisted.readerType.value = 'pdf';
+      hoisted.narrationRevision.mockResolvedValue('a'.repeat(32));
+      hoisted.resolveSession.mockResolvedValue({ session: null, operation: null, progress: null });
+      hoisted.exportProgress.mockResolvedValue(summary([chapter(0, 0)]));
+      const savedPlan = { artifact: { storageUserId: 'user-1', documentId: 'doc-1', documentVersion: 1, readerType: 'pdf' } };
+      hoisted.readPlan.mockResolvedValue(savedPlan);
+      const { json } = await start();
+      expect(hoisted.rows[0]?.planObjectKey).toBe(planKey());
+      const cleared = { opId: 'generation-op-2', status: 'failed', error: { code: 'TTS_PLAYBACK_CACHE_CLEARED', message: 'TTS playback cache was cleared.' } };
+      hoisted.getOperation.mockResolvedValue(cleared);
+      hoisted.readPlan.mockRejectedValue(Object.assign(new Error('missing'), { name: 'NoSuchKey' }));
+
+      // A cache clear alone keeps its own explanation.
+      expect((await get(json.id)).json.generation.issue).toEqual({ code: 'TTS_PLAYBACK_CACHE_CLEARED', message: 'TTS playback cache was cleared.' });
+
+      // A replaced layout with the saved plan still there can be generated again.
+      hoisted.narrationRevision.mockResolvedValue('b'.repeat(32));
+      hoisted.readPlan.mockResolvedValueOnce(savedPlan);
+      expect((await get(json.id)).json.generation.issue).toEqual({ code: 'TTS_PLAYBACK_CACHE_CLEARED', message: 'TTS playback cache was cleared.' });
+
+      // Without it, the request can only be made again, and nothing is generated.
+      hoisted.createPlayback.mockClear();
+      expect((await get(json.id)).json).toMatchObject({
+        status: 'failed',
+        generation: { issue: { code: 'PDF_LAYOUT_CHANGED', message: expect.stringContaining('Request the audiobook again') } },
+      });
+      expect(hoisted.createPlayback).not.toHaveBeenCalled();
+    });
   });
 
   test('reports an unreachable (for example redeploying) worker as retryable', async () => {

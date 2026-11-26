@@ -40,6 +40,8 @@ import {
 } from '@/lib/server/tts/playback-request';
 import { TTS_PLAYBACK_SESSION_TTL_MS } from '@/lib/server/tts/playback-sessions';
 import { resolvePdfNarrationRevision } from '@/lib/server/tts/pdf-narration-revision';
+import { readTtsPlaybackPlanArtifact } from '@/lib/server/tts/playback-plans';
+import { isMissingBlobError } from '@/lib/server/documents/blobstore';
 import { storageLimit } from '@/lib/server/storage/usage';
 import { resolveUserDocumentScope, type ResolvedSegmentDocumentScope } from '@/lib/server/tts/segments-auth';
 import type { Audiobook, AudiobookStatus, TtsExportArtifactState, TtsExportGenerationState, TtsExportIssue } from '@/types/tts-export';
@@ -318,6 +320,14 @@ async function advanceAudiobook(input: {
     retryAfterMs: extra.retryAfterMs ?? null,
   });
 
+  // A request whose PDF layout a reparse has replaced can't be planned again;
+  // without its original plan it can only be requested again.
+  const layoutReplaced = async () => scope.readerType === 'pdf' && intent.narrationRevision !== undefined
+    && intent.narrationRevision !== await resolvePdfNarrationRevision(documentId, scope);
+  const layoutChangedReport = (operationId?: string | null) => reportGeneration('failed', {
+    operationId: operationId ?? null, issue: PDF_LAYOUT_CHANGED_ISSUE,
+  });
+
   let planObjectKey = intent.parsed.planObjectKey ?? null;
   if (!planObjectKey) {
     let operation;
@@ -325,7 +335,10 @@ async function advanceAudiobook(input: {
     // find the plan it runs on so the run can still be stopped.
     if (command === 'read' || command === 'stop') {
       const existing = await findPlaybackPlanOperation({ parsed: intent.parsed, scope, planningInput: { settingsHash, settingsJson, planning } });
-      if (!existing) return reportGeneration(command === 'stop' ? 'stopped' : 'idle');
+      if (!existing) {
+        if (command === 'stop') return reportGeneration('stopped');
+        return await layoutReplaced() ? layoutChangedReport() : reportGeneration('idle');
+      }
       operation = existing;
     } else try {
       operation = await createAdmittedPlaybackPlanOperation({
@@ -351,12 +364,8 @@ async function advanceAudiobook(input: {
     if (operation.status === 'failed' || !planResult?.planObjectKey) {
       // Whatever stopped the plan, a request whose layout was since replaced
       // can only be requested again.
-      const layoutChanged = scope.readerType === 'pdf' && intent.narrationRevision !== undefined
-        && intent.narrationRevision !== await resolvePdfNarrationRevision(documentId, scope);
-      return reportGeneration('failed', {
-        operationId: operation.opId,
-        issue: layoutChanged ? PDF_LAYOUT_CHANGED_ISSUE : exportOperationIssue(operation),
-      });
+      if (await layoutReplaced()) return layoutChangedReport(operation.opId);
+      return reportGeneration('failed', { operationId: operation.opId, issue: exportOperationIssue(operation) });
     }
     planObjectKey = planResult.planObjectKey;
     if (command !== 'read') await db.update(audiobookRequests).set({ planObjectKey }).where(eq(audiobookRequests.id, id));
@@ -420,6 +429,11 @@ async function advanceAudiobook(input: {
     return { generation, progress, ...classified };
   };
   let current = await readGeneration(command === 'retry-skipped' || chapterIndex !== null);
+  // A saved plan that a cache clear removed is gone for good once its layout was replaced.
+  if (intent.parsed.planObjectKey && current.state !== 'complete' && await layoutReplaced()
+    && !await savedPlanExists(intent.parsed.planObjectKey)) {
+    return layoutChangedReport(current.generation.operation?.opId);
+  }
   const rememberGeneration = async (operationId: string | undefined) => {
     if (!operationId || operationId === generationOperationId || command === 'read' || command === 'stop') return;
     generationOperationId = operationId;
@@ -584,6 +598,16 @@ async function advanceAudiobook(input: {
     filename: ready?.dispositionFilename ?? null,
     retryAfterMs,
   });
+}
+
+async function savedPlanExists(planObjectKey: string): Promise<boolean> {
+  try {
+    await readTtsPlaybackPlanArtifact(planObjectKey);
+    return true;
+  } catch (error) {
+    if (isMissingBlobError(error)) return false;
+    throw error;
+  }
 }
 
 /** The request's ID, and the request with the layout revision that ID was assigned for. */
