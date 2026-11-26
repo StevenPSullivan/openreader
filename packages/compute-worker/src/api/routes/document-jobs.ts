@@ -166,10 +166,10 @@ export function registerDocumentResolutionRoutes(context: ComputeWorkerRouteCont
       namespace: parsed.data.namespace,
       prefix: s3Prefix,
     });
-    const hasArtifact = await deps.artifactExists?.(artifactKey) ?? false;
-    const narrationRevision = hasArtifact
-      ? (await context.storage.headObject?.(artifactKey))?.metadata[PARSED_PDF_NARRATION_REVISION_METADATA]
-      : undefined;
+    // Where storage supports it, one HEAD gives both existence and the revision.
+    const head = context.storage.headObject ? await context.storage.headObject(artifactKey) : undefined;
+    const hasArtifact = head === undefined ? await deps.artifactExists?.(artifactKey) ?? false : head !== null;
+    const narrationRevision = head?.metadata[PARSED_PDF_NARRATION_REVISION_METADATA];
     const index = await deps.operationStateStore.getOpIndex?.(buildPdfOperationKey(parsed.data));
     const operation = index?.opId ? await deps.operationStateStore.getOpState(index.opId) : null;
     return {
