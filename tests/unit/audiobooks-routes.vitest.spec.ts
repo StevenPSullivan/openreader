@@ -15,6 +15,7 @@ const hoisted = vi.hoisted(() => ({
   getOperation: vi.fn(),
   plan: vi.fn(),
   readPlan: vi.fn(),
+  planExists: vi.fn(),
   storageLimit: vi.fn(),
   findPlan: vi.fn(),
   ensurePdf: vi.fn(),
@@ -110,7 +111,10 @@ vi.mock('@/lib/server/reader/playback', () => ({
   resolveDefaultPlaybackRequest: vi.fn(),
 }));
 
-vi.mock('@/lib/server/tts/playback-plans', () => ({ readTtsPlaybackPlanArtifact: hoisted.readPlan }));
+vi.mock('@/lib/server/tts/playback-plans', () => ({
+  readTtsPlaybackPlanArtifact: hoisted.readPlan,
+  ttsPlaybackPlanArtifactExists: hoisted.planExists,
+}));
 vi.mock('@/lib/server/tts/pdf-narration-revision', () => ({ resolvePdfNarrationRevision: hoisted.narrationRevision }));
 vi.mock('@/lib/server/storage/usage', () => ({ storageLimit: hoisted.storageLimit }));
 vi.mock('@/lib/server/storage/s3', () => ({ getS3Config: () => ({ prefix: 'openreader' }) }));
@@ -289,8 +293,9 @@ describe('/api/v1/documents/[id]/audiobooks', () => {
       hoisted.resolveSession, hoisted.resolveArtifact, hoisted.createPlayback, hoisted.createArtifact,
       hoisted.createAdmitted, hoisted.exportProgress, hoisted.cancelSession, hoisted.deleteArtifact, hoisted.artifactId,
       hoisted.getOperation, hoisted.plan,
-      hoisted.readPlan, hoisted.findPlan, hoisted.ensurePdf, hoisted.settingsHash, hoisted.storageLimit, hoisted.narrationRevision,
+      hoisted.readPlan, hoisted.findPlan, hoisted.ensurePdf, hoisted.settingsHash, hoisted.storageLimit, hoisted.narrationRevision, hoisted.planExists,
     ]) mock.mockReset();
+    hoisted.planExists.mockResolvedValue(true);
     hoisted.storageLimit.mockResolvedValue(null);
     // Vite sets BASE_URL to its own base path under test.
     vi.stubEnv('BASE_URL', 'http://localhost:3003');
@@ -969,21 +974,17 @@ describe('/api/v1/documents/[id]/audiobooks', () => {
       });
     });
 
-    test('a read-only view of a pending PDF request with no plan operation reports a replaced layout', async () => {
+    test('a read-only view of a pending PDF request leaves a replaced layout to its plan job', async () => {
       hoisted.readerType.value = 'pdf';
       hoisted.narrationRevision.mockResolvedValue('a'.repeat(32));
       hoisted.plan.mockResolvedValueOnce({ opId: 'plan-op', status: 'running' });
       hoisted.resolveSession.mockResolvedValue({ session: null, operation: null, progress: null });
       const { json } = await start({ planObjectKey: undefined });
       hoisted.scopes.value = ['documents:read'];
-
-      // Its plan operation is gone; on the same layout it has simply not started.
-      expect((await get(json.id)).json).toMatchObject({ status: 'idle', generation: { issue: null } });
+      // Another voice may have saved the original plan, so a missing plan
+      // operation says nothing about it: only planning can tell.
       hoisted.narrationRevision.mockResolvedValue('b'.repeat(32));
-      expect((await get(json.id)).json).toMatchObject({
-        status: 'failed',
-        generation: { issue: { code: 'PDF_LAYOUT_CHANGED', message: expect.stringContaining('Request the audiobook again') } },
-      });
+      expect((await get(json.id)).json).toMatchObject({ status: 'idle', generation: { issue: null } });
     });
 
     test('a PDF request whose saved plan was cleared asks to be requested again once its layout was replaced', async () => {
@@ -991,29 +992,42 @@ describe('/api/v1/documents/[id]/audiobooks', () => {
       hoisted.narrationRevision.mockResolvedValue('a'.repeat(32));
       hoisted.resolveSession.mockResolvedValue({ session: null, operation: null, progress: null });
       hoisted.exportProgress.mockResolvedValue(summary([chapter(0, 0)]));
-      const savedPlan = { artifact: { storageUserId: 'user-1', documentId: 'doc-1', documentVersion: 1, readerType: 'pdf' } };
-      hoisted.readPlan.mockResolvedValue(savedPlan);
+      hoisted.readPlan.mockResolvedValue({ artifact: { storageUserId: 'user-1', documentId: 'doc-1', documentVersion: 1, readerType: 'pdf' } });
       const { json } = await start();
       expect(hoisted.rows[0]?.planObjectKey).toBe(planKey());
       const cleared = { opId: 'generation-op-2', status: 'failed', error: { code: 'TTS_PLAYBACK_CACHE_CLEARED', message: 'TTS playback cache was cleared.' } };
       hoisted.getOperation.mockResolvedValue(cleared);
-      hoisted.readPlan.mockRejectedValue(Object.assign(new Error('missing'), { name: 'NoSuchKey' }));
+      hoisted.planExists.mockResolvedValue(false);
 
       // A cache clear alone keeps its own explanation.
       expect((await get(json.id)).json.generation.issue).toEqual({ code: 'TTS_PLAYBACK_CACHE_CLEARED', message: 'TTS playback cache was cleared.' });
 
-      // A replaced layout with the saved plan still there can be generated again.
+      // A replaced layout with the saved plan still stored can be generated again.
       hoisted.narrationRevision.mockResolvedValue('b'.repeat(32));
-      hoisted.readPlan.mockResolvedValueOnce(savedPlan);
+      hoisted.planExists.mockResolvedValueOnce(true);
       expect((await get(json.id)).json.generation.issue).toEqual({ code: 'TTS_PLAYBACK_CACHE_CLEARED', message: 'TTS playback cache was cleared.' });
 
-      // Without it, the request can only be made again, and nothing is generated.
+      // Without it, the request can only be made again, and nothing is generated or built.
       hoisted.createPlayback.mockClear();
+      hoisted.createArtifact.mockClear();
       expect((await get(json.id)).json).toMatchObject({
         status: 'failed',
         generation: { issue: { code: 'PDF_LAYOUT_CHANGED', message: expect.stringContaining('Request the audiobook again') } },
       });
       expect(hoisted.createPlayback).not.toHaveBeenCalled();
+      expect(hoisted.createArtifact).not.toHaveBeenCalled();
+      expect(hoisted.planExists).toHaveBeenLastCalledWith(planKey());
+
+      // A file that was finished before stays downloadable.
+      hoisted.resolveArtifact.mockReset();
+      hoisted.resolveArtifact.mockResolvedValue({
+        artifact: { artifactId: 'abcdef1234567890', generatedSegments: 10, skippedSegments: 0, dispositionFilename: 'book.mp3' },
+        operation: null,
+      });
+      hoisted.exportProgress.mockResolvedValue(summary([chapter(0, 10)]));
+      hoisted.getOperation.mockResolvedValue({ opId: 'generation-op-2', status: 'canceled' });
+      const finished = (await get(json.id)).json;
+      expect(finished).toMatchObject({ status: 'ready', downloadUrl: '/api/v1/documents/doc-1/audiobooks/files/abcdef1234567890' });
     });
   });
 

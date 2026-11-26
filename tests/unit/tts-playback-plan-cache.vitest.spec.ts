@@ -7,7 +7,7 @@ vi.mock('@/lib/server/storage/s3', () => ({
 }));
 vi.mock('@/lib/server/compute-worker/client', () => ({ getComputeWorkerClient: vi.fn() }));
 
-import { readTtsPlaybackPlanArtifact } from '@/lib/server/tts/playback-plans';
+import { readTtsPlaybackPlanArtifact, ttsPlaybackPlanArtifactExists } from '@/lib/server/tts/playback-plans';
 
 const body = JSON.stringify({ schemaVersion: 1, segments: [{ ordinal: 0, text: 'A sentence.' }] });
 
@@ -28,4 +28,13 @@ test('retries a plan artifact whose read failed', async () => {
   await expect(readTtsPlaybackPlanArtifact('plans/flaky.json')).rejects.toThrow('unavailable');
   await expect(readTtsPlaybackPlanArtifact('plans/flaky.json')).resolves.toMatchObject({ body });
   expect(mocks.send).toHaveBeenCalledTimes(2);
+});
+
+test('checks that a plan is still stored in storage, not in the cache', async () => {
+  await readTtsPlaybackPlanArtifact('plans/removed.json');
+  mocks.send.mockReset().mockRejectedValue(Object.assign(new Error('missing'), { name: 'NotFound' }));
+  expect(await ttsPlaybackPlanArtifactExists('plans/removed.json')).toBe(false);
+  expect(mocks.send.mock.calls[0]?.[0]?.constructor?.name).toBe('HeadObjectCommand');
+  mocks.send.mockReset().mockResolvedValue({});
+  expect(await ttsPlaybackPlanArtifactExists('plans/removed.json')).toBe(true);
 });
