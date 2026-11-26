@@ -1,13 +1,12 @@
 {
-  "revision": "df5a8a101d796fc54da783dfb06db967ac166e18",
-  "project": "openreader",
+  "revision": "188c71959f1bd8b3783b0bdd2d22df5d14eab05f",
+  "project": "compute-worker",
   "tests": [
-    "tests/unit/pdf-reparse-playback-identity.vitest.spec.ts",
-    "tests/unit/reader-bootstrap-language.vitest.spec.ts",
-    "tests/unit/reader-playback-preparation.vitest.spec.ts",
-    "tests/unit/tts-playback-request.vitest.spec.ts",
-    "tests/unit/tts-segments.vitest.spec.ts",
-    "tests/unit/cached-voices.vitest.spec.ts",
-    "tests/unit/audiobooks-routes.vitest.spec.ts"
+    "packages/compute-worker/tests/unit/kokoro-engine-synthesis.test.ts",
+    "packages/compute-worker/tests/unit/kokoro-engine.test.ts",
+    "packages/compute-worker/tests/unit/kokoro-learned-g2p.test.ts",
+    "packages/compute-worker/tests/unit/kokoro-misaki-g2p.test.ts",
+    "packages/compute-worker/tests/unit/kokoro-model-files.test.ts",
+    "packages/compute-worker/tests/unit/playback-kokoro-timings.test.ts"
   ]
 }
