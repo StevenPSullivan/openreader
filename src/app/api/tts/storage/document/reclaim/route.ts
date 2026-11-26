@@ -24,23 +24,31 @@ export async function POST(request: NextRequest) {
     const client = getComputeWorkerClient();
     const signal = AbortSignal.timeout(50_000);
     // Keep exactly what the storage screen reports as current.
-    const pinned = resolved.scope.readerType === 'pdf'
-      ? await pinnedSettingsHashes(resolved, (await client.getUserStorageUsage({
+    let pinned: string[] | null = [];
+    if (resolved.scope.readerType === 'pdf' && resolved.narrationRevision !== null) {
+      const report = await client.getUserStorageUsage({
         storageUserId: resolved.scope.storageUserId,
         includePlayback: true,
         documentId: resolved.documentId,
         derivedDocumentIds: [],
         namespace: null,
-      }, { signal })).documents.find((row) => row.documentId === resolved.documentId)?.exports ?? [])
-      : [];
+      }, { signal });
+      pinned = await pinnedSettingsHashes(resolved, {
+        truncated: report.truncated,
+        exports: report.documents.find((row) => row.documentId === resolved.documentId)?.exports ?? [],
+      });
+    }
     const result = await client.reclaimTtsPlaybackCache({
       storageUserId: resolved.scope.storageUserId,
       documentId: resolved.documentId,
-      keep: {
-        documentVersion: resolved.scope.documentVersion,
-        settingsHash: resolved.settingsHash,
-        ...(pinned.length ? { settingsHashes: pinned } : {}),
-      },
+      // Without a complete report, every variant of this version is kept.
+      keep: pinned === null
+        ? { documentVersion: resolved.scope.documentVersion }
+        : {
+          documentVersion: resolved.scope.documentVersion,
+          settingsHash: resolved.settingsHash,
+          ...(pinned.length ? { settingsHashes: pinned } : {}),
+        },
     }, { signal });
     return NextResponse.json(result);
   } catch (error) {

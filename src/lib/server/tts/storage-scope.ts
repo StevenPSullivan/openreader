@@ -16,6 +16,8 @@ export type DocumentStorageScope = {
   settingsHash: string;
   /** The settings payload the identity was built from. */
   parsed: ParsedTtsPlaybackRequestBody;
+  /** The current PDF layout's narration revision, if a reparse set one. */
+  narrationRevision: string | null;
 };
 
 /**
@@ -30,8 +32,14 @@ export async function resolveDocumentStorageScope(
   if (!parsed) return NextResponse.json({ error: 'Invalid request payload' }, { status: 400 });
   const scope = await resolveSegmentDocumentScope(request, parsed.documentId);
   if (scope instanceof Response) return scope;
-  const { settingsHash } = await buildTtsPlaybackPlanningInput(parsed, scope);
-  return { documentId: parsed.documentId, scope, settingsHash, parsed };
+  const { settingsHash, planning } = await buildTtsPlaybackPlanningInput(parsed, scope);
+  return {
+    documentId: parsed.documentId,
+    scope,
+    settingsHash,
+    parsed,
+    narrationRevision: planning.documentSource?.narrationRevision ?? null,
+  };
 }
 
 /**
@@ -41,13 +49,24 @@ export async function resolveDocumentStorageScope(
  * kept only when the current settings on that layout produce exactly it, so
  * audio for other voices or settings stays reclaimable. The storage screen and
  * reclaim use the same set.
+ *
+ * Null means the report cannot rule out an export on an earlier layout (it was
+ * truncated or could not attribute an export), so the whole current version is
+ * kept. Only a layout a reparse changed can have earlier-layout exports.
  */
 export async function pinnedSettingsHashes(
   resolved: DocumentStorageScope,
-  exports: ReadonlyArray<{ documentVersion: number | null; settingsHash: string | null; planObjectKey?: string }>,
-): Promise<string[]> {
+  report: {
+    truncated: boolean;
+    exports: ReadonlyArray<{ documentVersion: number | null; settingsHash: string | null; planObjectKey?: string }>;
+  },
+): Promise<string[] | null> {
   const { scope, documentId, parsed } = resolved;
-  if (scope.readerType !== 'pdf') return [];
+  if (scope.readerType !== 'pdf' || resolved.narrationRevision === null) return [];
+  const { exports } = report;
+  const unattributed = exports.some((row) => row.documentVersion === null || row.settingsHash === null
+    || (row.documentVersion === scope.documentVersion && row.settingsHash !== resolved.settingsHash && !row.planObjectKey));
+  if (report.truncated || unattributed) return null;
   const candidates: Array<{ settingsHash: string; narrationRevision: string | null }> = [];
   for (const row of exports) {
     if (row.documentVersion !== scope.documentVersion || !row.settingsHash || !row.planObjectKey

@@ -121,12 +121,12 @@ async function withAudiobookLock<T>(caller: AudiobookCaller, documentId: string,
   }
 }
 
-function audiobookId(caller: AudiobookCaller, intent: AudiobookIntent, settingsHash: string): string {
+function audiobookId(scope: ResolvedSegmentDocumentScope, intent: AudiobookIntent, settingsHash: string): string {
   return createHash('sha256')
     .update(JSON.stringify([
-      caller.scope.storageUserId,
+      scope.storageUserId,
       intent.parsed.documentId,
-      caller.scope.documentVersion,
+      scope.documentVersion,
       settingsHash,
       intent.format,
       intent.speed,
@@ -590,7 +590,7 @@ async function advanceAudiobook(input: {
 async function idFor(caller: AudiobookCaller, requested: AudiobookIntent): Promise<{ id: string; intent: AudiobookIntent }> {
   const intent = await withNarrationRevision(caller, requested);
   const { settingsHash } = await planningInputFor(caller.scope, intent);
-  return { id: audiobookId(caller, intent, settingsHash), intent };
+  return { id: audiobookId(caller.scope, intent, settingsHash), intent };
 }
 
 type StartOptions = {
@@ -829,6 +829,10 @@ export async function liveAudiobookVariants(
     const intent = intentFromRow(row);
     if (!intent) continue;
     const { settingsHash } = await planningInputFor(scope, intent);
+    // The request's ID names the cache identity it was assigned for. Settings
+    // it inherited, such as the document's skip kinds, may have changed since,
+    // so a recomputed hash counts only while it still gives that ID.
+    if (audiobookId(scope, intent, settingsHash) !== row.id) continue;
     variants.push({ settingsHash, narrationRevision: intent.narrationRevision ?? null });
   }
   return variants;

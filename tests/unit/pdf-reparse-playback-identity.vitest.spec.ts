@@ -121,19 +121,31 @@ describe('PDF playback identity after Force reparse', () => {
     const exportOf = (settingsHash: string, planObjectKey: string, documentVersion = 7) => (
       { documentVersion, settingsHash, planObjectKey, bytes: 100, objects: 2 });
     mocks.liveVariants.mockResolvedValue([]);
+    const report = (exports: ReturnType<typeof exportOf>[], truncated = false) => ({ truncated, exports });
 
     // An export made with the current settings on the earlier layout keeps its
     // audio even after its request was pruned. Another voice's export does not
     // protect the current voice's old audio, and neither does an export whose
     // plan is gone or one from an older document version.
-    expect(await pinnedSettingsHashes(resolved, [
+    expect(await pinnedSettingsHashes(resolved, report([
       exportOf(legacy.settingsHash, OLD_PLAN),
       exportOf(legacyOtherVoice.settingsHash, OLD_PLAN),
       exportOf(older.settingsHash, missing),
       exportOf(legacy.settingsHash, OLD_PLAN, 6),
       exportOf(resolved.settingsHash, NEW_PLAN),
-    ])).toEqual([legacy.settingsHash]);
-    expect(await pinnedSettingsHashes(resolved, [exportOf(legacyOtherVoice.settingsHash, OLD_PLAN)])).toEqual([]);
+    ]))).toEqual([legacy.settingsHash]);
+    expect(await pinnedSettingsHashes(resolved, report([exportOf(legacyOtherVoice.settingsHash, OLD_PLAN)]))).toEqual([]);
+
+    // A report that may miss an export cannot clear any variant of this version.
+    expect(await pinnedSettingsHashes(resolved, report([exportOf(legacy.settingsHash, OLD_PLAN)], true))).toBeNull();
+    expect(await pinnedSettingsHashes(resolved, report([
+      { documentVersion: null, settingsHash: null, bytes: 100, objects: 2 } as never,
+    ]))).toBeNull();
+    expect(await pinnedSettingsHashes(resolved, report([
+      { documentVersion: 7, settingsHash: legacy.settingsHash, bytes: 100, objects: 2 } as never,
+    ]))).toBeNull();
+    // A layout no reparse changed has no earlier-layout exports to protect.
+    expect(await pinnedSettingsHashes({ ...resolved, narrationRevision: null }, report([], true))).toEqual([]);
 
     // A live request still preparing on an earlier layout keeps its audio when
     // it uses the current settings.
@@ -141,12 +153,12 @@ describe('PDF playback identity after Force reparse', () => {
       { settingsHash: older.settingsHash, narrationRevision: 'e'.repeat(32) },
       { settingsHash: legacyOtherVoice.settingsHash, narrationRevision: null },
     ]);
-    expect(await pinnedSettingsHashes(resolved, [])).toEqual([older.settingsHash]);
+    expect(await pinnedSettingsHashes(resolved, report([]))).toEqual([older.settingsHash]);
 
     mocks.liveVariants.mockClear();
-    expect(await pinnedSettingsHashes({ ...resolved, scope: { ...scope, readerType: 'epub' } }, [
+    expect(await pinnedSettingsHashes({ ...resolved, scope: { ...scope, readerType: 'epub' } }, report([
       exportOf(legacy.settingsHash, OLD_PLAN),
-    ])).toEqual([]);
+    ]))).toEqual([]);
     expect(mocks.liveVariants).not.toHaveBeenCalled();
   });
 

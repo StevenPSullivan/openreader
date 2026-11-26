@@ -41,6 +41,7 @@ vi.mock('@/lib/server/tts/storage-scope', () => ({
       scope: { storageUserId: 'user-1', documentVersion: 3, readerType: 'pdf' },
       settingsHash: 'current-hash',
       parsed: {},
+      narrationRevision: 'r'.repeat(32),
     };
   },
   pinnedSettingsHashes: mocks.pinned,
@@ -171,8 +172,35 @@ describe('storage routes', () => {
       documentId: 'doc-1',
       keep: { documentVersion: 3, settingsHash: 'current-hash', settingsHashes: ['pinned-hash'] },
     }, expect.anything());
-    // Both requests judged the same exports.
-    expect(mocks.pinned.mock.calls.map((call) => call[1])).toEqual([[pinnedExport], [pinnedExport]]);
+    // Both requests judged the same report.
+    expect(mocks.pinned.mock.calls.map((call) => call[1])).toEqual([
+      { truncated: false, exports: [pinnedExport] }, { truncated: false, exports: [pinnedExport] },
+    ]);
+  });
+
+  test('keeps and reports the whole current version when the report is incomplete', async () => {
+    mocks.pinned.mockResolvedValue(null);
+    mocks.usage.mockResolvedValue({
+      documents: [{
+        documentId: 'doc-1',
+        variants: [variant(3, 'current-hash', 120), variant(3, 'old-layout', 70), variant(2, 'current-hash', 30)],
+        exports: [],
+        derivedBytes: 50,
+        derivedObjects: 2,
+      }],
+      scannedObjects: 200_000,
+      truncated: true,
+    });
+    const usage = await documentUsage(post('/api/tts/storage/document', { documentId: 'doc-1' }));
+    expect(await usage.json()).toEqual({
+      currentAudioBytes: 120 + 70, unusedAudioBytes: 30, documentDataBytes: 50, truncated: true,
+    });
+    await documentReclaim(post('/api/tts/storage/document/reclaim', { documentId: 'doc-1' }));
+    expect(mocks.reclaim).toHaveBeenCalledWith({
+      storageUserId: 'user-1',
+      documentId: 'doc-1',
+      keep: { documentVersion: 3 },
+    }, expect.anything());
   });
 
   test('reads the SQL total without measuring storage, including while the worker is down', async () => {

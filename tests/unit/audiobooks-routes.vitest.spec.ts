@@ -948,6 +948,20 @@ describe('/api/v1/documents/[id]/audiobooks', () => {
       expect(revisionsUsed()).toEqual([null]);
     });
 
+    test('a live request protects storage only while its settings still give its ID', async () => {
+      const { liveAudiobookVariants } = await import('@/lib/server/audiobooks/audiobooks');
+      hoisted.readerType.value = 'pdf';
+      hoisted.narrationRevision.mockResolvedValue('a'.repeat(32));
+      hoisted.plan.mockResolvedValueOnce({ opId: 'plan-op', status: 'running' });
+      hoisted.resolveSession.mockResolvedValue({ session: null, operation: null, progress: null });
+      await start({ planObjectKey: undefined });
+      const scope = { userId: 'user-1', storageUserId: 'user-1', documentVersion: 1, readerType: 'pdf' } as never;
+      expect(await liveAudiobookVariants(scope, 'doc-1')).toEqual([{ settingsHash: 'settings-1', narrationRevision: 'a'.repeat(32) }]);
+      // The request inherited the document's skip kinds, which have changed since.
+      hoisted.settingsHash.mockReturnValue('settings-2');
+      expect(await liveAudiobookVariants(scope, 'doc-1')).toEqual([]);
+    });
+
     test('a pending PDF request whose plan was cleared and whose layout was replaced asks to be requested again', async () => {
       hoisted.readerType.value = 'pdf';
       hoisted.narrationRevision.mockResolvedValue('a'.repeat(32));

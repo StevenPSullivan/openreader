@@ -22,13 +22,19 @@ export type DocumentStorageSummary = {
  */
 export function summarizeDocumentStorage(
   report: UserStorageUsageReport,
-  current: { documentId: string; documentVersion: number; settingsHash: string; settingsHashes?: readonly string[] },
+  current: {
+    documentId: string;
+    documentVersion: number;
+    settingsHash: string;
+    /** More identities reclaim keeps; null keeps the whole current version. */
+    settingsHashes?: readonly string[] | null;
+  },
 ): DocumentStorageSummary {
   const document = report.documents.find((row) => row.documentId === current.documentId);
   const isCurrent = (documentVersion: number | null, settingsHash: string | null) => (
     documentVersion === null || settingsHash === null
-    || (documentVersion === current.documentVersion
-      && (settingsHash === current.settingsHash || Boolean(current.settingsHashes?.includes(settingsHash))))
+    || (documentVersion === current.documentVersion && (current.settingsHashes === null
+      || settingsHash === current.settingsHash || Boolean(current.settingsHashes?.includes(settingsHash))))
   );
   let currentAudioBytes = 0;
   let unusedAudioBytes = 0;
