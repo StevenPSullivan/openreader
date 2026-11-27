@@ -948,6 +948,33 @@ describe('/api/v1/documents/[id]/audiobooks', () => {
       expect(revisionsUsed()).toEqual([null]);
     });
 
+    test('a PDF request naming a saved plan takes its revision from the plan it validated', async () => {
+      const { buildTtsPlaybackPlanningInput } = await import('@/lib/server/tts/playback-request');
+      hoisted.readerType.value = 'pdf';
+      hoisted.readPlan.mockResolvedValue({ artifact: {
+        storageUserId: 'user-1', documentId: 'doc-1', documentVersion: 1, readerType: 'pdf', narrationRevision: 'a'.repeat(32),
+      } });
+      // A second lookup would see the newer layout, for example while the plan is briefly unavailable.
+      hoisted.narrationRevision.mockResolvedValue('b'.repeat(32));
+      hoisted.plan.mockResolvedValueOnce({ opId: 'plan-op', status: 'running' });
+      hoisted.resolveSession.mockResolvedValue({ session: null, operation: null, progress: null });
+      vi.mocked(buildTtsPlaybackPlanningInput).mockClear();
+      const { json } = await start();
+      expect(hoisted.narrationRevision).not.toHaveBeenCalled();
+      expect(vi.mocked(buildTtsPlaybackPlanningInput).mock.calls.map((call) => call[2]?.narrationRevision))
+        .toEqual(expect.arrayContaining(['a'.repeat(32)]));
+      expect(vi.mocked(buildTtsPlaybackPlanningInput).mock.calls.every((call) => call[2]?.narrationRevision === 'a'.repeat(32))).toBe(true);
+      const stored = hoisted.rows.find((row) => row.id === json.id)?.settingsJson;
+      expect((typeof stored === 'string' ? JSON.parse(stored) : stored).narrationRevision).toBe('a'.repeat(32));
+
+      // A plan saved before revisions existed belongs to a layout without one.
+      hoisted.readPlan.mockResolvedValue({ artifact: { storageUserId: 'user-1', documentId: 'doc-1', documentVersion: 1, readerType: 'pdf' } });
+      vi.mocked(buildTtsPlaybackPlanningInput).mockClear();
+      await start({ speed: 1.5 });
+      expect(vi.mocked(buildTtsPlaybackPlanningInput).mock.calls.every((call) => call[2]?.narrationRevision === null)).toBe(true);
+      expect(hoisted.narrationRevision).not.toHaveBeenCalled();
+    });
+
     test('a pending PDF request asks to be requested again only when its plan job reports a replaced layout', async () => {
       hoisted.readerType.value = 'pdf';
       hoisted.narrationRevision.mockResolvedValue('a'.repeat(32));
