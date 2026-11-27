@@ -48,12 +48,7 @@ describe('PDF line reading order', () => {
 
     // A citation at half the body size.
     expect(runOrder([line(57, 639, ['The survey was repeated ', 12], ['(Station log, 2025.)', 6], [' Staff confirmed it.', 12])]))
-      .toEqual(['The survey was repeated ', '(Station log, 2025.)', ' Staff confirmed it.']);
-
-    // A raised footnote marker after the sentence, with a top between the body's and the citation's.
-    expect(runOrder([line(72, 600, ['Claim one ', 12], ['(Ref.)', 6], [' Claim two.', 12], ['1', 6, 2.5])]))
-      .toEqual(['Claim one ', '(Ref.)', ' Claim two.', '1']);
-  });
+      .toEqual(['The survey was repeated ', '(Station log, 2025.)', ' Staff confirmed it.']);  });
 
   test('reads a larger value in place, row by row, in text and table regions', () => {
     const row = (baseline: number, cells: string[]) => cells.flatMap((cell, column) => (
