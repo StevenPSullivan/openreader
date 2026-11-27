@@ -1,8 +1,9 @@
 {
-  "revision": "772a841dcbfb757239da8b35286e12e262a837e1",
+  "revision": "76c331e87996bdb435970eb614782d3245cfb446",
   "project": "compute-worker",
   "tests": [
-    "packages/compute-worker/tests/api/routes.test.ts",
-    "packages/compute-worker/tests/compute/control-plane/orchestrator.test.ts"
+    "packages/compute-worker/tests/compute/algorithms/pdf-line-reading-order.test.ts",
+    "packages/compute-worker/tests/compute/algorithms/pdf-merge-text-with-regions.test.ts",
+    "packages/compute-worker/tests/compute/algorithms/pdf-parse-normalize-text-items.test.ts"
   ]
 }
