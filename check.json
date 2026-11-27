@@ -1,5 +1,5 @@
 {
-  "revision": "be100295b07bafea437fc64b4e78a09687e63b40",
+  "revision": "25bdc1275780ddb364d196f66125ad80c4f73da4",
   "project": "compute-worker",
   "tests": [
     "packages/compute-worker/tests/compute/algorithms/pdf-line-reading-order.test.ts",
