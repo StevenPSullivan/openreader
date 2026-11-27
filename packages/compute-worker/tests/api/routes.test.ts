@@ -513,6 +513,16 @@ describe('compute worker API routes', () => {
     fake.unreadableArtifactKeys.add(artifactKey(kept));
     expect((await layoutRequest(kept, '/v1/pdf-layout/jobs')).json().opId).toBe(keptOpId);
     expect((await layoutRequest(kept, '/v1/pdf-layout/resolve')).statusCode).toBe(500);
+
+    // A parse that publishes and succeeds during resolve keeps its operation, as upstream.
+    const finishing = 'b'.repeat(64);
+    const finishingOpId = await succeeded(finishing);
+    fake.publishedAfterCheckArtifactKeys.add(artifactKey(finishing));
+    expect((await layoutRequest(finishing, '/v1/pdf-layout/resolve')).json()).toMatchObject({
+      artifact: null,
+      operation: { opId: finishingOpId, status: 'succeeded' },
+    });
+    expect((await layoutRequest(finishing, '/v1/pdf-layout/jobs')).json().opId).toBe(finishingOpId);
   });
 
   test('returns not found for unknown operation and event stream lookups', async () => {

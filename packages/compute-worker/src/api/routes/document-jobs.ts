@@ -188,8 +188,10 @@ export function registerDocumentResolutionRoutes(context: ComputeWorkerRouteCont
     const index = await deps.operationStateStore.getOpIndex?.(buildPdfOperationKey(parsed.data));
     const indexed = index?.opId ? await deps.operationStateStore.getOpState(index.opId) : null;
     // A succeeded operation without its layout is not reported, so the caller
-    // creates a new parse (see findSucceededPdfLayoutWithoutArtifact).
-    const operation = indexed && (hasArtifact || indexed.status !== 'succeeded') ? indexed : null;
+    // creates a new parse (see findSucceededPdfLayoutWithoutArtifact). Check
+    // again: the first check may predate the layout's publication.
+    const removed = indexed?.status === 'succeeded' && !hasArtifact && !await deps.artifactExists?.(artifactKey);
+    const operation = removed ? null : indexed;
     return {
       artifact: hasArtifact ? { objectKey: artifactKey } : null,
       operation: operation ? toComputeOperation(operation) : null,
