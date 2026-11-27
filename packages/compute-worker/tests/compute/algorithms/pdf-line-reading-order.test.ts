@@ -57,6 +57,22 @@ describe('PDF line reading order', () => {
       line(72, 598, ['Both: CO', 12], ['2', 6, -2], [' emissions', 12], ['3', 6, 4], [' rose.', 12]),
     );
     expect(merged.map((block) => block.text)).toEqual(['Then I1 went back. Water is H2O today. Both: CO2 emissions3 rose.']);
+
+    // Solid leading brings a subscript close to the next line's superscript.
+    const tight = readAtRenderScale(
+      line(72, 500, ['Water is H', 12], ['2', 8, -3.5], ['O at room temperature.', 12]),
+      line(72, 488, ['Area is in m', 12], ['2', 8, 4.75], [' for this example.', 12]),
+    );
+    expect(tight.map((block) => block.text)).toEqual(['Water is H2O at room temperature. Area is in m2 for this example.']);
+
+    // On 10 pt leading a high superscript's top is level with its own line's
+    // tops and its bottom near the line above; it must not join the two lines.
+    const tighter = readAtRenderScale(
+      line(72, 500, ['Water is H', 12], ['2', 6, -1], ['O today.', 12]),
+      line(72, 490, ['Area is in m', 12], ['2', 6, 6], [' here.', 12]),
+    );
+    const order = tighter[0]!.items.map((item) => item.text);
+    expect(order.indexOf('O today.')).toBeLessThan(order.indexOf('Area is in m'));
   });
 
   test('reads same-size words with uneven baselines left to right', () => {
@@ -75,6 +91,10 @@ describe('PDF line reading order', () => {
     expect(merged[0]?.items.map((item) => item.text)).toEqual([
       'Solid leading one.', 'Solid leading two.', 'A small note 11 pt above.', 'A larger line.', 'A small note 7 pt below.',
     ]);
+
+    // A chart value over three times its label's size, with the label 9 pt below.
+    const chart = readAtRenderScale(line(100, 400, ['40%', 24]), line(90, 391, ['Growth', 8]));
+    expect(chart[0]?.items.map((item) => item.text)).toEqual(['40%', 'Growth']);
   });
 
   test('keeps a multi-line drop cap with its first line', () => {
@@ -92,6 +112,18 @@ describe('PDF line reading order', () => {
       expect(merged.map((block) => block.text)).toEqual([
         'Once the rain stopped. Everyone followed the track. The shops were open. Back at the margin.',
       ]);
+    }
+
+    // A two-line cap twice the body size, level with the first line's top and
+    // on the second line's baseline. With the tighter leading the cap's top
+    // is the line's first.
+    for (const leading of [12, 10.5]) {
+      const twoLine = readAtRenderScale(
+        line(72, 462, ['O', 24]),
+        line(84, 462 + leading, ['pen the ', 12], ['report.', 12]),
+        line(84, 462, ['Then review the chart.', 12]),
+      );
+      expect(twoLine.map((block) => block.text)).toEqual(['Open the report. Then review the chart.']);
     }
   });
 

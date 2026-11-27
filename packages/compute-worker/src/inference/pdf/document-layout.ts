@@ -49,12 +49,10 @@ function contains(region: LayoutRegion, item: PdfTextItem): boolean {
 
 // Runs on one baseline have different tops when their font sizes differ, as
 // with an inline citation, a footnote marker or a larger table value. Their
-// box bottoms stay near the baseline, so runs share a line when their tops
-// match or the smaller run's bottom is near the larger run's: up to half the
-// larger size above it, as a superscript rises, or a quarter below it, as a
-// subscript drops.
-function sharesLine(a: PdfTextItem, b: PdfTextItem): boolean {
-  if (Math.abs(a.y - b.y) <= 2) return true;
+// box bottoms stay near the baseline: the smaller run's bottom is at most half
+// the larger size above the larger run's, as a superscript rises, or a third
+// below it, as a subscript drops.
+function sharesBaseline(a: PdfTextItem, b: PdfTextItem): boolean {
   // A top clamped to the page edge no longer locates the glyphs.
   if (a.y === 0 || b.y === 0) return false;
   const [small, large] = a.height <= b.height ? [a, b] : [b, a];
@@ -62,15 +60,25 @@ function sharesLine(a: PdfTextItem, b: PdfTextItem): boolean {
   // of its lines.
   if (large.height > 2 * small.height) return false;
   const drop = small.y + small.height - (large.y + large.height);
-  const maxDrop = small.height < large.height ? large.height / 4 : large.height / 2;
+  const maxDrop = small.height < large.height ? large.height / 3 : large.height / 2;
   return drop <= maxDrop && -drop <= large.height / 2;
+}
+
+// A run joins a line through the line's widest run, its body text, or by
+// matching the top of a run at least as large, as before. A drop cap or a
+// marker never links two lines.
+function joinsLine(item: PdfTextItem, line: PdfTextItem[]): boolean {
+  const body = line.reduce((widest, other) => (other.width > widest.width ? other : widest));
+  const topsMatch = (other: PdfTextItem) => Math.abs(item.y - other.y) <= 2;
+  if (topsMatch(body) || line.some((other) => other.height >= item.height && topsMatch(other))) return true;
+  return sharesBaseline(item, body);
 }
 
 function sortReadingOrder(items: PdfTextItem[]): PdfTextItem[] {
   const lines: PdfTextItem[][] = [];
   for (const item of [...items].sort((a, b) => a.y - b.y || a.x - b.x)) {
     const line = lines[lines.length - 1];
-    if (line?.some((other) => sharesLine(item, other))) line.push(item);
+    if (line && joinsLine(item, line)) line.push(item);
     else lines.push([item]);
   }
   return lines.flatMap((line) => line.sort((a, b) => a.x - b.x));
