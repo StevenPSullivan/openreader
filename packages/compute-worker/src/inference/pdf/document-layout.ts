@@ -48,24 +48,29 @@ function contains(region: LayoutRegion, item: PdfTextItem): boolean {
 }
 
 // Runs on one baseline have different tops when their font sizes differ, as
-// with an inline citation, a footnote marker or a larger table value. Either
-// their tops match, or the smaller run's middle lies within the larger run.
+// with an inline citation, a footnote marker or a larger table value. Their
+// box bottoms stay near the baseline, so runs share a line when their tops
+// match or the smaller run's bottom is near the larger run's: up to half the
+// larger size above it, as a superscript rises, or a quarter below it, as a
+// subscript drops.
 function sharesLine(a: PdfTextItem, b: PdfTextItem): boolean {
   if (Math.abs(a.y - b.y) <= 2) return true;
   // A top clamped to the page edge no longer locates the glyphs.
   if (a.y === 0 || b.y === 0) return false;
   const [small, large] = a.height <= b.height ? [a, b] : [b, a];
-  const middle = small.y + small.height / 2;
-  return middle >= large.y && middle <= large.y + large.height;
+  // A run over twice the size of another, such as a drop cap, spans several
+  // of its lines.
+  if (large.height > 2 * small.height) return false;
+  const drop = small.y + small.height - (large.y + large.height);
+  const maxDrop = small.height < large.height ? large.height / 4 : large.height / 2;
+  return drop <= maxDrop && -drop <= large.height / 2;
 }
 
 function sortReadingOrder(items: PdfTextItem[]): PdfTextItem[] {
   const lines: PdfTextItem[][] = [];
   for (const item of [...items].sort((a, b) => a.y - b.y || a.x - b.x)) {
     const line = lines[lines.length - 1];
-    // Matching every run on the line keeps a drop cap that spans several
-    // lines from joining them into one.
-    if (line?.every((other) => sharesLine(item, other))) line.push(item);
+    if (line?.some((other) => sharesLine(item, other))) line.push(item);
     else lines.push([item]);
   }
   return lines.flatMap((line) => line.sort((a, b) => a.x - b.x));

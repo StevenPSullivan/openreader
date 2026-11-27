@@ -54,8 +54,9 @@ describe('PDF line reading order', () => {
     const merged = readAtRenderScale(
       line(72, 626, ['Then I', 12], ['1', 6, 4], [' went back.', 12]),
       line(72, 612, ['Water is H', 12], ['2', 6, -2], ['O today.', 12]),
+      line(72, 598, ['Both: CO', 12], ['2', 6, -2], [' emissions', 12], ['3', 6, 4], [' rose.', 12]),
     );
-    expect(merged.map((block) => block.text)).toEqual(['Then I1 went back. Water is H2O today.']);
+    expect(merged.map((block) => block.text)).toEqual(['Then I1 went back. Water is H2O today. Both: CO2 emissions3 rose.']);
   });
 
   test('reads same-size words with uneven baselines left to right', () => {
@@ -67,12 +68,12 @@ describe('PDF line reading order', () => {
     const merged = readAtRenderScale(
       line(100, 580, ['Solid leading one.', 12]),
       line(72, 568, ['Solid leading two.', 12]),
-      line(100, 544, ['A small note above.', 8]),
+      line(100, 541, ['A small note 11 pt above.', 8]),
       line(72, 530, ['A larger line.', 16]),
-      line(100, 520, ['A small note below.', 8]),
+      line(60, 523, ['A small note 7 pt below.', 8]),
     );
-    expect(merged.map((block) => block.text)).toEqual([
-      'Solid leading one. Solid leading two. A small note above. A larger line. A small note below.',
+    expect(merged[0]?.items.map((item) => item.text)).toEqual([
+      'Solid leading one.', 'Solid leading two.', 'A small note 11 pt above.', 'A larger line.', 'A small note 7 pt below.',
     ]);
   });
 
@@ -95,9 +96,9 @@ describe('PDF line reading order', () => {
   });
 
   test('keeps text clipped by the top page edge in order', () => {
-    // The larger run's top is clamped to the page edge; the smaller run's is not.
-    const edge = readAtRenderScale(line(72, 781, ['Chapter 3 ', 12], ['Results', 16]));
-    expect(edge[0]?.items.map((item) => item.text)).toEqual(['Chapter 3 ', 'Results']);
+    // Only the largest run's top is clamped to the page edge.
+    const edge = readAtRenderScale(line(72, 781, ['Chapter ', 10], ['3 ', 11], ['Results', 13]));
+    expect(edge[0]?.items.map((item) => item.text)).toEqual(['Chapter ', '3 ', 'Results']);
 
     // A line mostly above the page edge stays before the line below it.
     const clipped = readAtRenderScale(
