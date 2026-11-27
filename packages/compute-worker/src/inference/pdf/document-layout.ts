@@ -47,12 +47,28 @@ function contains(region: LayoutRegion, item: PdfTextItem): boolean {
   return c.x >= region.bbox[0] && c.x <= region.bbox[2] && c.y >= region.bbox[1] && c.y <= region.bbox[3];
 }
 
+// Runs on one baseline have different tops when their font sizes differ, as
+// with an inline citation, a footnote marker or a larger table value. Either
+// their tops match, or the smaller run's middle lies within the larger run.
+function sharesLine(a: PdfTextItem, b: PdfTextItem): boolean {
+  if (Math.abs(a.y - b.y) <= 2) return true;
+  // A top clamped to the page edge no longer locates the glyphs.
+  if (a.y === 0 || b.y === 0) return false;
+  const [small, large] = a.height <= b.height ? [a, b] : [b, a];
+  const middle = small.y + small.height / 2;
+  return middle >= large.y && middle <= large.y + large.height;
+}
+
 function sortReadingOrder(items: PdfTextItem[]): PdfTextItem[] {
-  const tolerance = 2;
-  return [...items].sort((a, b) => {
-    if (Math.abs(a.y - b.y) <= tolerance) return a.x - b.x;
-    return a.y - b.y;
-  });
+  const lines: PdfTextItem[][] = [];
+  for (const item of [...items].sort((a, b) => a.y - b.y || a.x - b.x)) {
+    const line = lines[lines.length - 1];
+    // Matching every run on the line keeps a drop cap that spans several
+    // lines from joining them into one.
+    if (line?.every((other) => sharesLine(item, other))) line.push(item);
+    else lines.push([item]);
+  }
+  return lines.flatMap((line) => line.sort((a, b) => a.x - b.x));
 }
 
 function joinText(items: PdfTextItem[]): string {
