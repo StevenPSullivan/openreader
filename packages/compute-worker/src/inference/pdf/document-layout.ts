@@ -58,42 +58,53 @@ function sharesBaseline(a: PdfTextItem, b: PdfTextItem): boolean {
   return baselineA !== undefined && baselineB !== undefined && Math.abs(baselineA - baselineB) <= 1;
 }
 
-const roundHeight = (item: PdfTextItem) => Math.round(item.height * 10) / 10;
+const middleOf = (item: PdfTextItem) => item.y + item.height / 2;
 
-// The run height that carries the most characters: the body text size.
-function bodyHeight(items: PdfTextItem[]): number {
-  const characters = new Map<number, number>();
-  for (const item of items) {
-    characters.set(roundHeight(item), (characters.get(roundHeight(item)) ?? 0) + item.text.length);
-  }
-  let body = 0;
-  for (const [height, count] of characters) {
-    if (count > (characters.get(body) ?? -1) || (count === characters.get(body) && height > body)) body = height;
-  }
-  return body;
+function cachedPerRun<T>(compute: (run: PdfTextItem) => T): (run: PdfTextItem) => T {
+  const cache = new Map<PdfTextItem, T>();
+  return (run) => {
+    if (!cache.has(run)) cache.set(run, compute(run));
+    return cache.get(run)!;
+  };
 }
 
-// Where a run goes in the ordered runs so far. A smaller run on the baseline
-// of larger runs, such as an inline citation or the cells beside a larger
-// table value, has a lower top, so it arrives after them. It moves back over
-// the runs on its baseline to its right and goes before the first larger one
-// of at least body size. A subscript and the next line's superscript can share
-// a baseline, but neither is body text, so neither moves the other.
-function placeOnBaseline(ordered: PdfTextItem[], item: PdfTextItem, body: number): number {
-  let at = ordered.length;
-  for (let i = ordered.length - 1; i >= 0; i -= 1) {
-    const other = ordered[i]!;
-    if (!sharesBaseline(item, other) || other.x < item.x) break;
-    if (other.height > item.height && roundHeight(other) >= body) at = i;
-  }
-  return at;
-}
-
+// Runs of different sizes or fonts on one baseline, such as an inline citation
+// or a larger table value, have different tops, so the top order can put a run
+// after others on its baseline that lie to its right. Each run then moves back
+// over those and goes before the first that belongs to its line: not a marker,
+// and not reaching into another line. A marker never moves, so a subscript and
+// the next line's superscript sharing a baseline stay put.
 function sortReadingOrder(items: PdfTextItem[]): PdfTextItem[] {
-  const body = bodyHeight(items);
+  // Set off the baseline of a larger run beside it, as a subscript or
+  // superscript is set off the word it follows: their boxes overlap vertically,
+  // and their horizontal gap is within a quarter of the larger run's height.
+  const isMarker = cachedPerRun((run) => items.some((other) => (
+    other.height > run.height
+    && !sharesBaseline(run, other)
+    && Math.min(run.y + run.height, other.y + other.height) > Math.max(run.y, other.y)
+    && Math.abs(Math.max(run.x - (other.x + other.width), other.x - (run.x + run.width))) <= other.height / 4
+  )));
+  // The highest middle, below this run's top, of a run off its baseline. A run
+  // reaches into another line, as a run spanning two lines does, when that
+  // middle is above the middle of the run being placed.
+  const otherLineMiddle = cachedPerRun((run) => {
+    let highest = Number.POSITIVE_INFINITY;
+    for (const other of items) {
+      const middle = middleOf(other);
+      if (!sharesBaseline(other, run) && middle >= run.y && middle < highest) highest = middle;
+    }
+    return highest;
+  });
+
   const ordered: PdfTextItem[] = [];
   for (const item of [...items].sort((a, b) => (topsMatch(a, b) ? a.x - b.x : a.y - b.y))) {
-    ordered.splice(placeOnBaseline(ordered, item, body), 0, item);
+    let at = ordered.length;
+    for (let i = ordered.length - 1; i >= 0; i -= 1) {
+      const other = ordered[i]!;
+      if (!sharesBaseline(item, other) || other.x < item.x || isMarker(item)) break;
+      if (!isMarker(other) && otherLineMiddle(other) >= middleOf(item)) at = i;
+    }
+    ordered.splice(at, 0, item);
   }
   return ordered;
 }
