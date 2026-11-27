@@ -49,6 +49,10 @@ describe('PDF line reading order', () => {
     // A citation at half the body size.
     expect(runOrder([line(57, 639, ['The survey was repeated ', 12], ['(Station log, 2025.)', 6], [' Staff confirmed it.', 12])]))
       .toEqual(['The survey was repeated ', '(Station log, 2025.)', ' Staff confirmed it.']);
+
+    // A raised footnote marker after the sentence, with a top between the body's and the citation's.
+    expect(runOrder([line(72, 600, ['Claim one ', 12], ['(Ref.)', 6], [' Claim two.', 12], ['1', 6, 2.5])]))
+      .toEqual(['Claim one ', '(Ref.)', ' Claim two.', '1']);
   });
 
   test('reads a larger value in place, row by row, in text and table regions', () => {
@@ -62,6 +66,12 @@ describe('PDF line reading order', () => {
       ], label);
       expect(merged.map((block) => block.text)).toEqual(['Alder 38 degrees Left 40 psi Birch 41 degrees Right 45 psi']);
     }
+
+    // A larger value on the next row whose top is level with this row's.
+    expect(readAtRenderScale([
+      line(72, 513, ['Alder', 11]), line(200, 513, ['North', 12]),
+      line(130, 500, ['50', 24]), line(200, 500, ['South', 12]),
+    ], 'table')[0]!.items.map((item) => item.text)).toEqual(['Alder', 'North', '50', 'South']);
   });
 
   test('keeps adjacent lines apart', () => {

@@ -51,40 +51,17 @@ function contains(region: LayoutRegion, item: PdfTextItem): boolean {
 
 const baselineOf = (item: PdfTextItem) => (item.ascent === undefined ? undefined : item.y + item.height * item.ascent);
 
-// The baseline most of the line's runs share. A tie goes to the higher one, so
-// a drop cap, which sits on a later line's baseline, never sets it.
-function lineBaseline(line: PdfTextItem[]): number | undefined {
-  const baselines = line.map(baselineOf).filter((baseline) => baseline !== undefined);
-  let best: number | undefined;
-  let bestCount = 0;
-  for (const baseline of baselines) {
-    const count = baselines.filter((other) => Math.abs(other - baseline) <= 1).length;
-    if (best === undefined || count > bestCount || (count === bestCount && baseline < best)) {
-      best = baseline;
-      bestCount = count;
-    }
-  }
-  return best;
-}
-
-// Runs whose tops match share a line, as before. Runs of different sizes on
-// the line's baseline, such as an inline citation or a larger table value,
-// have different tops, so they join by the baseline instead.
-function joinsLine(item: PdfTextItem, line: PdfTextItem[]): boolean {
-  if (line.some((other) => Math.abs(item.y - other.y) <= 2)) return true;
-  const baseline = baselineOf(item);
-  const shared = lineBaseline(line);
-  return baseline !== undefined && shared !== undefined && Math.abs(baseline - shared) <= 1;
+// Runs of different sizes on one baseline, such as an inline citation or a
+// larger table value, have different tops, so their baselines are compared too.
+function onOneLine(a: PdfTextItem, b: PdfTextItem): boolean {
+  if (Math.abs(a.y - b.y) <= 2) return true;
+  const baselineA = baselineOf(a);
+  const baselineB = baselineOf(b);
+  return baselineA !== undefined && baselineB !== undefined && Math.abs(baselineA - baselineB) <= 1;
 }
 
 function sortReadingOrder(items: PdfTextItem[]): PdfTextItem[] {
-  const lines: PdfTextItem[][] = [];
-  for (const item of [...items].sort((a, b) => a.y - b.y || a.x - b.x)) {
-    const line = lines[lines.length - 1];
-    if (line && joinsLine(item, line)) line.push(item);
-    else lines.push([item]);
-  }
-  return lines.flatMap((line) => line.sort((a, b) => a.x - b.x));
+  return [...items].sort((a, b) => (onOneLine(a, b) ? a.x - b.x : a.y - b.y));
 }
 
 function joinText(items: PdfTextItem[]): string {
