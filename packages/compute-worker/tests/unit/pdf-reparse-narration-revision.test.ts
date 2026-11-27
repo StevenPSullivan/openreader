@@ -349,10 +349,27 @@ describe('Force reparse plan identity', () => {
     const stored = memory.objects.get(planned.planObjectKey)!;
     const revision = 'd'.repeat(32);
     memory.replaceLayout(pdfLayout('Newer text.', revision));
-    // A reader that resolved the current revision while the key was missing.
+    // An export pinned to the earlier layout, whose first read fails.
     memory.failNext(planned.planObjectKey, Object.assign(new Error('Service Unavailable'), { $metadata: { httpStatusCode: 503 } }));
-    const recovered = await plan(memory, { ...planRequest(revision), planObjectKey: planned.planObjectKey });
+    const recovered = await plan(memory, { ...planRequest(), planObjectKey: planned.planObjectKey });
     expect(recovered.plannedSegments.map((segment) => segment.text)).toEqual(['Original text.']);
     expect(memory.objects.get(planned.planObjectKey)).toBe(stored);
+  });
+
+  test('a stored plan of another layout revision is never used for a request', async () => {
+    const memory = planStorage(pdfLayout('Original text.'));
+    const planned = await plan(memory, planRequest());
+    const revision = 'd'.repeat(32);
+    memory.replaceLayout(pdfLayout('Newer text.', revision));
+    // The app resolved the newer revision while the key was briefly missing,
+    // and the earlier plan was published again before the worker read it.
+    await expect(plan(memory, { ...planRequest(revision), planObjectKey: planned.planObjectKey }))
+      .rejects.toThrow('another version of this PDF layout');
+    memory.failNext(planned.planObjectKey, Object.assign(new Error('Service Unavailable'), { $metadata: { httpStatusCode: 503 } }));
+    await expect(plan(memory, { ...planRequest(revision), planObjectKey: planned.planObjectKey }))
+      .rejects.toThrow('another version of this PDF layout');
+    // The request for the plan's own revision still uses it.
+    const pinned = await plan(memory, { ...planRequest(), planObjectKey: planned.planObjectKey });
+    expect(pinned.plannedSegments.map((segment) => segment.text)).toEqual(['Original text.']);
   });
 });

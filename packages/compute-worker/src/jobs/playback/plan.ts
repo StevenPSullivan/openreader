@@ -267,7 +267,11 @@ export async function readPersistedTtsPlaybackPlanSegments(
   storage: Pick<ArtifactStorage, 'readObject'>,
   planObjectKey: string,
   expectedScope?: { documentId: string; documentVersion: number; readerType: string },
-  options: { onlyMissingIsAbsent?: boolean } = {},
+  options: {
+    onlyMissingIsAbsent?: boolean;
+    /** The PDF layout revision the reader's request is for; a plan of another is refused. */
+    narrationRevision?: string | null;
+  } = {},
 ): Promise<TtsPlaybackSegmentInput[] | null> {
   let bytes: ArrayBuffer;
   try {
@@ -281,6 +285,7 @@ export async function readPersistedTtsPlaybackPlanSegments(
     documentId?: unknown;
     documentVersion?: unknown;
     readerType?: unknown;
+    narrationRevision?: unknown;
     segments?: Array<{ ordinal?: unknown; segmentKey?: unknown; text?: unknown; locator?: unknown }>;
   };
   if (parsed.schemaVersion !== 1) {
@@ -289,6 +294,11 @@ export async function readPersistedTtsPlaybackPlanSegments(
   if (expectedScope && (parsed.documentId !== expectedScope.documentId
     || parsed.documentVersion !== expectedScope.documentVersion || parsed.readerType !== expectedScope.readerType)) {
     throw new Error('TTS playback plan scope mismatch');
+  }
+  if (options.narrationRevision !== undefined
+    && (typeof parsed.narrationRevision === 'string' ? parsed.narrationRevision : null) !== options.narrationRevision) {
+    // Its text belongs to another layout than the audio this request names.
+    throw new Error('The reading plan belongs to another version of this PDF layout. Try again.');
   }
   if (!Array.isArray(parsed.segments)) throw new Error('TTS playback plan artifact missing segments');
   return parsed.segments.map((row) => {
@@ -306,6 +316,11 @@ export async function readPersistedTtsPlaybackPlanSegments(
   });
 }
 
+/** The PDF layout revision a playback request is for; undefined for other readers. */
+function requestRevision(request: TtsPlaybackPlanCapableRequest): string | null | undefined {
+  return request.readerType === 'pdf' ? request.planning.documentSource?.narrationRevision ?? null : undefined;
+}
+
 /**
  * Plans a request whose plan was not found. A verdict about the plan needs
  * storage to confirm it is gone, so a plan that a failed read hid is returned
@@ -318,7 +333,7 @@ async function planAgain(
 ): Promise<{ segments: TtsPlaybackSegmentInput[]; recovered: boolean }> {
   const retained = async () => {
     const segments = await readPersistedTtsPlaybackPlanSegments(
-      input.storage, planObjectKey, undefined, { onlyMissingIsAbsent: true },
+      input.storage, planObjectKey, undefined, { onlyMissingIsAbsent: true, narrationRevision: requestRevision(input.request) },
     );
     return segments?.length ? { segments, recovered: true } : null;
   };
@@ -364,7 +379,8 @@ export async function resolveAndPersistTtsPlaybackPlan(input: {
   });
   const planObjectKey = input.request.planObjectKey ?? computedPlanObjectKey;
   const write = await prepareArtifactWrite(input.storage, planObjectKey, input.attempt);
-  let plannedSegments = await readPersistedTtsPlaybackPlanSegments(input.storage, planObjectKey);
+  const narrationRevision = requestRevision(input.request);
+  let plannedSegments = await readPersistedTtsPlaybackPlanSegments(input.storage, planObjectKey, undefined, { narrationRevision });
   if (!plannedSegments || plannedSegments.length === 0) {
     const replanned = await planAgain(input, planObjectKey, planObjectKey !== computedPlanObjectKey);
     if (replanned.recovered) {
@@ -373,7 +389,7 @@ export async function resolveAndPersistTtsPlaybackPlan(input: {
       const computed = replanned.segments;
       const winner = await publishOrAdoptArtifact(
         () => persistTtsPlaybackPlan({ write, planObjectKey, request: input.request, segments: computed }),
-        () => readPersistedTtsPlaybackPlanSegments(input.storage, planObjectKey, input.request),
+        () => readPersistedTtsPlaybackPlanSegments(input.storage, planObjectKey, input.request, { narrationRevision }),
         input.attempt,
       );
       plannedSegments = winner ?? computed;
