@@ -1,5 +1,5 @@
 {
-  "revision": "87dfdb093a7637a86cc9ad55f7ad6fc3a16dccfa",
+  "revision": "772a841dcbfb757239da8b35286e12e262a837e1",
   "project": "compute-worker",
   "tests": [
     "packages/compute-worker/tests/api/routes.test.ts",
