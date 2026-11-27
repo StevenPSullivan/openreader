@@ -1,16 +1,16 @@
 {
   "revision": "240006b1c13f5fb54c3f4195e60bebcd66d9fe0f",
-  "project": "compute-worker",
+  "project": "openreader",
   "tests": [
-    "packages/compute-worker/tests/unit/pdf-reparse-narration-revision.test.ts",
-    "packages/compute-worker/tests/unit/pdf-reparse-reclaim.test.ts",
-    "packages/compute-worker/tests/unit/cached-variants.test.ts",
-    "packages/compute-worker/tests/unit/storage-usage.test.ts",
-    "packages/compute-worker/tests/unit/tts-playback-derivation.test.ts",
-    "packages/compute-worker/tests/unit/pdf-layout-resume.test.ts",
-    "packages/compute-worker/tests/unit/pdf-artifact-persistence.test.ts",
-    "packages/compute-worker/tests/unit/playback-job-cache-discovery.test.ts",
-    "packages/compute-worker/tests/unit/playback-cache-clear.test.ts",
-    "packages/compute-worker/tests/api/routes.test.ts"
+    "tests/unit/pdf-reparse-playback-identity.vitest.spec.ts",
+    "tests/unit/storage-usage-summary.vitest.spec.ts",
+    "tests/unit/storage-routes.vitest.spec.ts",
+    "tests/unit/audiobooks-routes.vitest.spec.ts",
+    "tests/unit/tts-playback-plan-cache.vitest.spec.ts",
+    "tests/unit/reader-bootstrap-language.vitest.spec.ts",
+    "tests/unit/reader-playback-preparation.vitest.spec.ts",
+    "tests/unit/tts-playback-request.vitest.spec.ts",
+    "tests/unit/tts-segments.vitest.spec.ts",
+    "tests/unit/cached-voices.vitest.spec.ts"
   ]
 }
