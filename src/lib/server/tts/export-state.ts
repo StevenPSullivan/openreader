@@ -41,8 +41,8 @@ function isInflight(status: string | null | undefined): boolean {
   return status === 'queued' || status === 'running';
 }
 
-/** An audiobook whose PDF layout a reparse replaced before its plan existed. */
-export const PDF_LAYOUT_CHANGED_ISSUE: TtsExportIssue = {
+/** The worker found that a reparse replaced the PDF layout an audiobook's plan needs. */
+const PDF_LAYOUT_CHANGED_ISSUE: TtsExportIssue = {
   code: 'PDF_LAYOUT_CHANGED',
   message: 'This PDF was reparsed after the audiobook was requested. Request the audiobook again.',
 };

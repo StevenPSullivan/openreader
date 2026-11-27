@@ -93,6 +93,9 @@ export function computeSegmentationSignature(input: SegmentationSignatureInput):
   return createHash('sha256').update(segmentationSignatureCanonical(input)).digest('hex').slice(0, 32);
 }
 
+/** Joins a settings hash and the PDF narration revision of a reparsed layout. */
+const NARRATION_REVISION_SEPARATOR = '.';
+
 /**
  * Hash that keys generated playback audio variants. Combines the voice/format
  * settings with the segmentation signature: the audio content depends on BOTH
@@ -116,8 +119,6 @@ export function buildTtsPlaybackSettingsHash(
   // that every layout of the document shares with these settings.
   return narrationRevision ? `${hash}${NARRATION_REVISION_SEPARATOR}${narrationRevision}` : hash;
 }
-
-const NARRATION_REVISION_SEPARATOR = '.';
 
 /**
  * The part of a playback settings hash that names the provider, voice, speed
