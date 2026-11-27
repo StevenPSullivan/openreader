@@ -48,7 +48,11 @@ describe('PDF line reading order', () => {
 
     // A citation at half the body size.
     expect(runOrder([line(57, 639, ['The survey was repeated ', 12], ['(Station log, 2025.)', 6], [' Staff confirmed it.', 12])]))
-      .toEqual(['The survey was repeated ', '(Station log, 2025.)', ' Staff confirmed it.']);  });
+      .toEqual(['The survey was repeated ', '(Station log, 2025.)', ' Staff confirmed it.']);
+
+    // A raised footnote marker after the sentence, its top between the body's and the citation's.
+    expect(runOrder([line(72, 600, ['Claim one ', 12], ['(Ref.)', 6], [' Claim two.', 12], ['1', 6, 2.25])]))
+      .toEqual(['Claim one ', '(Ref.)', ' Claim two.', '1']);  });
 
   test('reads a larger value in place, row by row, in text and table regions', () => {
     const row = (baseline: number, cells: string[]) => cells.flatMap((cell, column) => (
@@ -67,6 +71,22 @@ describe('PDF line reading order', () => {
       line(72, 513, ['Alder', 11]), line(200, 513, ['North', 12]),
       line(130, 500, ['50', 24]), line(200, 500, ['South', 12]),
     ], 'table')[0]!.items.map((item) => item.text)).toEqual(['Alder', 'North', '50', 'South']);
+
+    // A mixed-size upper row, and a lower-row value whose top matches two of its cells.
+    expect(readAtRenderScale([
+      line(72, 513, ['Alder', 12]), line(192, 513, ['North', 10]), line(312, 513, ['Active', 12]),
+      line(72, 501, ['Birch', 12]), line(230, 501, ['50', 24]), line(312, 501, ['Closed', 12]),
+    ], 'table')[0]!.items.map((item) => item.text)).toEqual(['Alder', 'North', 'Active', 'Birch', '50', 'Closed']);
+
+    // On an 11 pt row pitch the top order already puts that value inside the
+    // upper row; the lower row's other cells still stay out of it.
+    const tight = readAtRenderScale([
+      line(72, 513, ['Alder', 12]), line(192, 513, ['North', 10]), line(312, 513, ['Active', 12]),
+      line(72, 502, ['Birch', 12]), line(230, 502, ['50', 24]), line(312, 502, ['Closed', 12]),
+    ], 'table')[0]!.items.map((item) => item.text);
+    const upperRow = ['Alder', 'North', 'Active'].map((cell) => tight.indexOf(cell));
+    expect(upperRow).toEqual([...upperRow].sort((a, b) => a - b));
+    expect(Math.min(tight.indexOf('Birch'), tight.indexOf('Closed'))).toBeGreaterThan(Math.max(...upperRow));
   });
 
   test('keeps adjacent lines apart', () => {

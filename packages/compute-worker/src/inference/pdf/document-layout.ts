@@ -58,24 +58,33 @@ function sharesBaseline(a: PdfTextItem, b: PdfTextItem): boolean {
   return baselineA !== undefined && baselineB !== undefined && Math.abs(baselineA - baselineB) <= 1;
 }
 
+// Like joinText's line band: the smaller box overlaps the other by at least
+// half its height.
+function sharesBand(a: PdfTextItem, b: PdfTextItem): boolean {
+  const overlap = Math.min(a.y + a.height, b.y + b.height) - Math.max(a.y, b.y);
+  return overlap >= Math.min(a.height, b.height) / 2;
+}
+
+// Where a run goes in the ordered runs so far. A smaller run on the baseline
+// of larger runs, such as an inline citation or the cells beside a larger
+// table value, has a lower top, so it arrives after them. It moves before the
+// larger runs to its right on that baseline, crossing only runs on its own line.
+function placeOnBaseline(ordered: PdfTextItem[], item: PdfTextItem): number {
+  let at = ordered.length;
+  for (let i = ordered.length - 1; i >= 0; i -= 1) {
+    const other = ordered[i]!;
+    const onBaseline = sharesBaseline(item, other);
+    if (onBaseline && other.x < item.x) break;
+    if (onBaseline && other.height > item.height) at = i;
+    else if (!onBaseline && !topsMatch(item, other) && !sharesBand(item, other)) break;
+  }
+  return at;
+}
+
 function sortReadingOrder(items: PdfTextItem[]): PdfTextItem[] {
-  const byTop = [...items].sort((a, b) => (topsMatch(a, b) ? a.x - b.x : a.y - b.y));
-  // Runs of different sizes on one baseline, such as an inline citation or a
-  // larger table value, have different tops. Move each run beside the runs on
-  // its baseline, crossing only runs whose tops match its own.
   const ordered: PdfTextItem[] = [];
-  for (const item of byTop) {
-    let at = ordered.length;
-    for (let i = ordered.length - 1; i >= 0; i -= 1) {
-      const other = ordered[i]!;
-      if (sharesBaseline(item, other)) {
-        if (other.x < item.x) break;
-        at = i;
-      } else if (!topsMatch(item, other)) {
-        break;
-      }
-    }
-    ordered.splice(at, 0, item);
+  for (const item of [...items].sort((a, b) => (topsMatch(a, b) ? a.x - b.x : a.y - b.y))) {
+    ordered.splice(placeOnBaseline(ordered, item), 0, item);
   }
   return ordered;
 }
