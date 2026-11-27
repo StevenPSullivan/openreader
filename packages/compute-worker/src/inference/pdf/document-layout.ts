@@ -50,18 +50,34 @@ function contains(region: LayoutRegion, item: PdfTextItem): boolean {
 }
 
 const baselineOf = (item: PdfTextItem) => (item.ascent === undefined ? undefined : item.y + item.height * item.ascent);
+const topsMatch = (a: PdfTextItem, b: PdfTextItem) => Math.abs(a.y - b.y) <= 2;
 
-// Runs of different sizes on one baseline, such as an inline citation or a
-// larger table value, have different tops, so their baselines are compared too.
-function onOneLine(a: PdfTextItem, b: PdfTextItem): boolean {
-  if (Math.abs(a.y - b.y) <= 2) return true;
+function sharesBaseline(a: PdfTextItem, b: PdfTextItem): boolean {
   const baselineA = baselineOf(a);
   const baselineB = baselineOf(b);
   return baselineA !== undefined && baselineB !== undefined && Math.abs(baselineA - baselineB) <= 1;
 }
 
 function sortReadingOrder(items: PdfTextItem[]): PdfTextItem[] {
-  return [...items].sort((a, b) => (onOneLine(a, b) ? a.x - b.x : a.y - b.y));
+  const byTop = [...items].sort((a, b) => (topsMatch(a, b) ? a.x - b.x : a.y - b.y));
+  // Runs of different sizes on one baseline, such as an inline citation or a
+  // larger table value, have different tops. Move each run beside the runs on
+  // its baseline, crossing only runs whose tops match its own.
+  const ordered: PdfTextItem[] = [];
+  for (const item of byTop) {
+    let at = ordered.length;
+    for (let i = ordered.length - 1; i >= 0; i -= 1) {
+      const other = ordered[i]!;
+      if (sharesBaseline(item, other)) {
+        if (other.x < item.x) break;
+        at = i;
+      } else if (!topsMatch(item, other)) {
+        break;
+      }
+    }
+    ordered.splice(at, 0, item);
+  }
+  return ordered;
 }
 
 function joinText(items: PdfTextItem[]): string {
