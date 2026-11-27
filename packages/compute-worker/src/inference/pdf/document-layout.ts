@@ -58,24 +58,42 @@ function sharesBaseline(a: PdfTextItem, b: PdfTextItem): boolean {
   return baselineA !== undefined && baselineB !== undefined && Math.abs(baselineA - baselineB) <= 1;
 }
 
+const roundHeight = (item: PdfTextItem) => Math.round(item.height * 10) / 10;
+
+// The run height that carries the most characters: the body text size.
+function bodyHeight(items: PdfTextItem[]): number {
+  const characters = new Map<number, number>();
+  for (const item of items) {
+    characters.set(roundHeight(item), (characters.get(roundHeight(item)) ?? 0) + item.text.length);
+  }
+  let body = 0;
+  for (const [height, count] of characters) {
+    if (count > (characters.get(body) ?? -1) || (count === characters.get(body) && height > body)) body = height;
+  }
+  return body;
+}
+
 // Where a run goes in the ordered runs so far. A smaller run on the baseline
 // of larger runs, such as an inline citation or the cells beside a larger
 // table value, has a lower top, so it arrives after them. It moves back over
-// the runs on its baseline to its right and goes before the first larger one.
-function placeOnBaseline(ordered: PdfTextItem[], item: PdfTextItem): number {
+// the runs on its baseline to its right and goes before the first larger one
+// of at least body size. A subscript and the next line's superscript can share
+// a baseline, but neither is body text, so neither moves the other.
+function placeOnBaseline(ordered: PdfTextItem[], item: PdfTextItem, body: number): number {
   let at = ordered.length;
   for (let i = ordered.length - 1; i >= 0; i -= 1) {
     const other = ordered[i]!;
     if (!sharesBaseline(item, other) || other.x < item.x) break;
-    if (other.height > item.height) at = i;
+    if (other.height > item.height && roundHeight(other) >= body) at = i;
   }
   return at;
 }
 
 function sortReadingOrder(items: PdfTextItem[]): PdfTextItem[] {
+  const body = bodyHeight(items);
   const ordered: PdfTextItem[] = [];
   for (const item of [...items].sort((a, b) => (topsMatch(a, b) ? a.x - b.x : a.y - b.y))) {
-    ordered.splice(placeOnBaseline(ordered, item), 0, item);
+    ordered.splice(placeOnBaseline(ordered, item, body), 0, item);
   }
   return ordered;
 }

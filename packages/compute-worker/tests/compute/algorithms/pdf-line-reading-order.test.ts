@@ -113,6 +113,12 @@ describe('PDF line reading order', () => {
       line(72, 600, ['Hydrogen is H', 12], ['2', 8, -4]),
       line(72, 590, ['Volume is m', 12], ['3', 6, 6]),
     ])).toEqual(['Hydrogen is H', '2', 'Volume is m', '3']);
+    // On 12 pt leading the two markers sort next to each other; neither moves the other.
+    const adjacent = runOrder([
+      line(72, 600, ['Hydrogen is H', 12], ['2', 8, -4]),
+      line(72, 588, ['Volume is m', 12], ['3', 6, 8]),
+    ]);
+    expect(adjacent.indexOf('2')).toBeLessThan(adjacent.indexOf('3'));
 
     const cases = [
       // A subscript above the next line's superscript on solid leading.
