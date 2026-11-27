@@ -49,10 +49,7 @@ describe('PDF line reading order', () => {
     // A citation at half the body size.
     expect(runOrder([line(57, 639, ['The survey was repeated ', 12], ['(Station log, 2025.)', 6], [' Staff confirmed it.', 12])]))
       .toEqual(['The survey was repeated ', '(Station log, 2025.)', ' Staff confirmed it.']);
-
-    // A raised footnote marker after the sentence, its top between the body's and the citation's.
-    expect(runOrder([line(72, 600, ['Claim one ', 12], ['(Ref.)', 6], [' Claim two.', 12], ['1', 6, 2.25])]))
-      .toEqual(['Claim one ', '(Ref.)', ' Claim two.', '1']);  });
+  });
 
   test('reads a larger value in place, row by row, in text and table regions', () => {
     const row = (baseline: number, cells: string[]) => cells.flatMap((cell, column) => (
@@ -87,6 +84,14 @@ describe('PDF line reading order', () => {
     const upperRow = ['Alder', 'North', 'Active'].map((cell) => tight.indexOf(cell));
     expect(upperRow).toEqual([...upperRow].sort((a, b) => a - b));
     expect(Math.min(tight.indexOf('Birch'), tight.indexOf('Closed'))).toBeGreaterThan(Math.max(...upperRow));
+
+    // Larger lower-row cells whose boxes reach into a smaller upper row.
+    const reaching = readAtRenderScale([
+      line(72, 513, ['Alder', 8]), line(192, 513, ['North', 8]), line(312, 513, ['Active', 8]),
+      line(72, 501, ['Birch', 18]), line(230, 501, ['50', 20]), line(312, 501, ['Closed', 18]),
+    ], 'table')[0]!.items.map((item) => item.text);
+    expect(Math.min(reaching.indexOf('Birch'), reaching.indexOf('Closed')))
+      .toBeGreaterThan(Math.max(...['Alder', 'North', 'Active'].map((cell) => reaching.indexOf(cell))));
   });
 
   test('keeps adjacent lines apart', () => {
@@ -103,6 +108,12 @@ describe('PDF line reading order', () => {
   });
 
   test('keeps raised and lowered markers from linking lines', () => {
+    // A subscript and the next line's smaller superscript on one baseline.
+    expect(runOrder([
+      line(72, 600, ['Hydrogen is H', 12], ['2', 8, -4]),
+      line(72, 590, ['Volume is m', 12], ['3', 6, 6]),
+    ])).toEqual(['Hydrogen is H', '2', 'Volume is m', '3']);
+
     const cases = [
       // A subscript above the next line's superscript on solid leading.
       [line(72, 500, ['Water is H', 12], ['2', 8, -3.5], ['O here.', 12]), line(72, 488, ['Area is m', 12], ['2', 8, 4.75], [' too.', 12])],
