@@ -75,13 +75,15 @@ export function normalizeTextItemsForLayout(
       // viewport coordinates first, then adjust upward using font ascent,
       // which matches how pdf.js positions glyph runs in its text layer.
       const x = Math.max(0, origin.x);
-      const y = Math.max(0, origin.y - topOffset);
+      const top = origin.y - topOffset;
       return {
         text: item.str,
         x,
-        y,
+        y: Math.max(0, top),
         width,
         height,
+        // A top clamped to the page edge no longer locates the baseline.
+        ...(top >= 0 ? { ascent: topOffset / height } : {}),
       };
     });
 }
