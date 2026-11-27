@@ -268,8 +268,9 @@ export async function readPersistedTtsPlaybackPlanSegments(
   planObjectKey: string,
   expectedScope?: { documentId: string; documentVersion: number; readerType: string },
   options: {
-    onlyMissingIsAbsent?: boolean;
-    /** The PDF layout revision the reader's request is for; a plan of another is refused. */
+    /** Only a missing object counts as no plan; other read failures are raised. */
+    confirmMissing?: boolean;
+    /** The PDF layout revision the request is for; a plan recorded for another is refused. */
     narrationRevision?: string | null;
   } = {},
 ): Promise<TtsPlaybackSegmentInput[] | null> {
@@ -277,7 +278,7 @@ export async function readPersistedTtsPlaybackPlanSegments(
   try {
     bytes = await storage.readObject(planObjectKey);
   } catch (error) {
-    if (options.onlyMissingIsAbsent && !isNotFound(error)) throw error;
+    if (options.confirmMissing && !isNotFound(error)) throw error;
     return null;
   }
   const parsed = JSON.parse(Buffer.from(bytes).toString('utf8')) as {
@@ -317,44 +318,47 @@ export async function readPersistedTtsPlaybackPlanSegments(
 }
 
 /** The PDF layout revision a playback request is for; undefined for other readers. */
-function requestRevision(request: TtsPlaybackPlanCapableRequest): string | null | undefined {
+function requestNarrationRevision(request: TtsPlaybackPlanCapableRequest): string | null | undefined {
   return request.readerType === 'pdf' ? request.planning.documentSource?.narrationRevision ?? null : undefined;
 }
 
 /**
- * Plans a request whose plan was not found. A verdict about the plan needs
- * storage to confirm it is gone, so a plan that a failed read hid is returned
- * as stored instead, and is never rewritten.
+ * Plans a request whose plan was not found under `planObjectKey`.
+ *
+ * - A PDF layout that a reparse replaced since the request: PDF_LAYOUT_CHANGED.
+ * - A saved key on a PDF with a narration revision, which differs from the key
+ *   these inputs give: refused, because it may name another revision's text.
+ * - Otherwise: planned from the current source, then published under the key.
+ *
+ * Both refusals first read the plan again, counting only a missing object as
+ * gone. A plan found then is returned as stored and is not written again.
  */
-async function planAgain(
-  input: { request: TtsPlaybackPlanCapableRequest; storage: ArtifactStorage; s3Prefix: string },
-  planObjectKey: string,
-  savedKey: boolean,
-): Promise<{ segments: TtsPlaybackSegmentInput[]; recovered: boolean }> {
-  const retained = async () => {
+async function planMissing(input: {
+  request: TtsPlaybackPlanCapableRequest;
+  storage: ArtifactStorage;
+  s3Prefix: string;
+  planObjectKey: string;
+  savedKey: boolean;
+}): Promise<{ segments: TtsPlaybackSegmentInput[]; stored: boolean }> {
+  const narrationRevision = requestNarrationRevision(input.request);
+  const refuse = async (error: Error) => {
     const segments = await readPersistedTtsPlaybackPlanSegments(
-      input.storage, planObjectKey, undefined, { onlyMissingIsAbsent: true, narrationRevision: requestRevision(input.request) },
+      input.storage, input.planObjectKey, undefined, { confirmMissing: true, narrationRevision },
     );
-    return segments?.length ? { segments, recovered: true } : null;
+    if (segments?.length) return { segments, stored: true };
+    throw error;
   };
   let units: CanonicalTtsSourceUnit[];
   try {
-    // For a PDF this rejects a layout a reparse replaced since the request.
     units = await resolvePlaybackSourceUnits(input.request, input.storage, input.s3Prefix);
   } catch (error) {
-    if (!(error instanceof PdfLayoutChangedError)) throw error;
-    const plan = await retained();
-    if (plan) return plan;
+    if (error instanceof PdfLayoutChangedError) return refuse(error);
     throw error;
   }
-  // A saved plan that is gone is planned again only under its own key. A key
-  // computed from other settings or another layout revision names other text.
-  if (savedKey) {
-    const plan = await retained();
-    if (plan) return plan;
-    throw new Error('The reading plan is no longer available. Reopen the document.');
+  if (input.savedKey && narrationRevision) {
+    return refuse(new Error('The reading plan is no longer available. Reopen the document.'));
   }
-  return { segments: planTtsPlaybackSegments(input.request, units), recovered: false };
+  return { segments: planTtsPlaybackSegments(input.request, units), stored: false };
 }
 
 export async function resolveAndPersistTtsPlaybackPlan(input: {
@@ -379,14 +383,15 @@ export async function resolveAndPersistTtsPlaybackPlan(input: {
   });
   const planObjectKey = input.request.planObjectKey ?? computedPlanObjectKey;
   const write = await prepareArtifactWrite(input.storage, planObjectKey, input.attempt);
-  const narrationRevision = requestRevision(input.request);
+  // A plan recorded for another PDF layout revision is never used: its text
+  // would be paired with the audio of the revision this request names.
+  const narrationRevision = requestNarrationRevision(input.request);
   let plannedSegments = await readPersistedTtsPlaybackPlanSegments(input.storage, planObjectKey, undefined, { narrationRevision });
   if (!plannedSegments || plannedSegments.length === 0) {
-    const replanned = await planAgain(input, planObjectKey, planObjectKey !== computedPlanObjectKey);
-    if (replanned.recovered) {
-      plannedSegments = replanned.segments;
-    } else {
-      const computed = replanned.segments;
+    const missing = await planMissing({ ...input, planObjectKey, savedKey: planObjectKey !== computedPlanObjectKey });
+    plannedSegments = missing.segments;
+    if (!missing.stored) {
+      const computed = missing.segments;
       const winner = await publishOrAdoptArtifact(
         () => persistTtsPlaybackPlan({ write, planObjectKey, request: input.request, segments: computed }),
         () => readPersistedTtsPlaybackPlanSegments(input.storage, planObjectKey, input.request, { narrationRevision }),

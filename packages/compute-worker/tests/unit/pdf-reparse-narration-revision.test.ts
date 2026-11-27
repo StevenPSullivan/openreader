@@ -321,26 +321,16 @@ describe('Force reparse plan identity', () => {
     await expect(plan(memory, { ...planRequest(), planObjectKey: planned.planObjectKey })).rejects.toThrow('Service Unavailable');
   });
 
-  test('a cleared saved key is never rebuilt from other settings', async () => {
-    const layout = pdfLayout('Spruce log 41 cm.');
-    layout.pages[0]!.blocks.unshift({
-      id: 'p1-b-prose', kind: 'text', text: 'Station notes.',
-      fragments: [{ page: 1, bbox: [0, 0, 1, 1], text: 'Station notes.', readingOrder: 0 }],
-    } as never);
-    const memory = planStorage(layout);
+  test('a cleared saved key on a layout without a revision is planned again as on upstream', async () => {
+    const memory = planStorage(pdfLayout('Table text.'));
     const planned = await plan(memory, planRequest());
-    expect(planned.plannedSegments.map((segment) => segment.text)).toEqual(['Station notes.', 'Spruce log 41 cm.']);
     memory.objects.delete(planned.planObjectKey);
-    // An audiobook kept the saved key while the document began skipping tables.
+    // No reparse changed this PDF, so no revision can be behind the key.
     const skipping = planRequest();
-    skipping.planning.documentSource.skipBlockKinds = ['table'];
-    const refused = plan(memory, { ...skipping, planObjectKey: planned.planObjectKey });
-    await expect(refused).rejects.toThrow('Reopen the document');
-    await expect(refused).rejects.not.toHaveProperty('code', 'PDF_LAYOUT_CHANGED');
-    expect(memory.objects.has(planned.planObjectKey)).toBe(false);
-    // The request with the settings that key names rebuilds it, with the table.
-    const rebuilt = await plan(memory, { ...planRequest(), planObjectKey: planned.planObjectKey });
-    expect(rebuilt.plannedSegments.map((segment) => segment.text)).toEqual(['Station notes.', 'Spruce log 41 cm.']);
+    skipping.planning.documentSource.skipBlockKinds = ['header'];
+    const replanned = await plan(memory, { ...skipping, planObjectKey: planned.planObjectKey });
+    expect(replanned.planObjectKey).toBe(planned.planObjectKey);
+    expect(replanned.plannedSegments.map((segment) => segment.text)).toEqual(['Table text.']);
   });
 
   test('a plan recovered after a failed read is used as stored, not rewritten', async () => {
