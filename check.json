@@ -2,16 +2,9 @@
   "revision": "07b6106481b0eb650a1659612f813abd16c37ceb",
   "project": "compute-worker",
   "tests": [
-    "packages/compute-worker/tests/unit/pdf-reparse-narration-revision.test.ts",
-    "packages/compute-worker/tests/unit/pdf-reparse-reclaim.test.ts",
-    "packages/compute-worker/tests/unit/cached-variants.test.ts",
-    "packages/compute-worker/tests/unit/storage-usage.test.ts",
-    "packages/compute-worker/tests/unit/tts-playback-derivation.test.ts",
-    "packages/compute-worker/tests/unit/pdf-layout-resume.test.ts",
-    "packages/compute-worker/tests/unit/pdf-artifact-persistence.test.ts",
-    "packages/compute-worker/tests/unit/playback-job-cache-discovery.test.ts",
-    "packages/compute-worker/tests/unit/playback-cache-clear.test.ts",
-    "packages/compute-worker/tests/api/routes.test.ts",
-    "packages/compute-worker/tests/api/route-registrars.test.ts"
+    "packages/compute-worker/tests/compute/algorithms/pdf-line-reading-order.test.ts",
+    "packages/compute-worker/tests/compute/algorithms/pdf-merge-text-with-regions.test.ts",
+    "packages/compute-worker/tests/compute/algorithms/pdf-parse-normalize-text-items.test.ts",
+    "packages/compute-worker/tests/compute/algorithms/pdf-stitch-cross-page-blocks.test.ts"
   ]
 }
