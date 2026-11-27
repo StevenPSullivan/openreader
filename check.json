@@ -1,10 +1,8 @@
 {
-  "revision": "9bad0db98a555354ebb0d64a3e9c64397b30a5ef",
+  "revision": "87dfdb093a7637a86cc9ad55f7ad6fc3a16dccfa",
   "project": "compute-worker",
   "tests": [
-    "packages/compute-worker/tests/compute/algorithms/pdf-merge-text-with-regions.test.ts",
-    "packages/compute-worker/tests/compute/algorithms/pdf-stitch-cross-page-blocks.test.ts",
-    "packages/compute-worker/tests/unit/pdf-layout-resume.test.ts",
-    "packages/compute-worker/tests/unit/pdf-artifact-persistence.test.ts"
+    "packages/compute-worker/tests/api/routes.test.ts",
+    "packages/compute-worker/tests/compute/control-plane/orchestrator.test.ts"
   ]
 }
